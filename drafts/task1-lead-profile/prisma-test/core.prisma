@@ -1,0 +1,124 @@
+// Core schema (DFD 7.0: Users, Roles, Sessions, Notifications, System/Branding Settings, Audit Trail)
+// Five business modules (01-leads .. 05-ai-design) will add their own .prisma files in this folder.
+
+model Role {
+  id          Int      @id @default(autoincrement())
+  roleCode    String   @unique @map("role_code")
+  roleName    String   @map("role_name")
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  users       User[]
+
+  @@map("roles")
+}
+
+model User {
+  id             Int             @id @default(autoincrement())
+  roleId         Int             @map("role_id")
+  fullName       String          @map("full_name")
+  email          String          @unique
+  phone          String?
+  passwordHash   String          @map("password_hash")
+  department     String          @default("sales")
+  avatarUrl      String?         @map("avatar_url")
+  isActive       Boolean         @default(true) @map("is_active")
+  deletedAt      DateTime?       @map("deleted_at")
+  createdAt      DateTime        @default(now()) @map("created_at")
+  updatedAt      DateTime        @updatedAt @map("updated_at")
+  role           Role            @relation(fields: [roleId], references: [id])
+  sessions       UserSession[]
+  notifications  Notification[]
+  uploadedAssets BrandingAsset[]
+  auditLogs      AuditLog[]
+
+
+  assignedLeads Lead[] @relation("AssignedLeads")
+  receivedLeads Lead[] @relation("ReceivedLeads")
+  leadHistories LeadHistory[] @relation("LeadHistoryActor")
+
+
+  @@index([roleId])
+  @@index([deletedAt])
+  @@map("users")
+}
+
+model UserSession {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique @map("token_hash")
+  csrfToken String    @map("csrf_token")
+  userId    Int       @map("user_id")
+  ipAddress String?   @map("ip_address")
+  userAgent String?   @map("user_agent")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("user_sessions")
+}
+
+model Notification {
+  id                 Int       @id @default(autoincrement())
+  userId             Int       @map("user_id")
+  title              String
+  summary            String
+  category           String    @default("Hệ thống")
+  actionLabel        String?   @map("action_label")
+  actionUrl          String?   @map("action_url")
+  requiredPermission String?   @map("required_permission")
+  isRead             Boolean   @default(false) @map("is_read")
+  readAt             DateTime? @map("read_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+  @@map("notifications")
+}
+
+model BrandingAsset {
+  id            Int      @id @default(autoincrement())
+  slot          String   // 'logo' | 'login_hero' | 'dashboard_banner'
+  objectKey     String   @unique @map("object_key")
+  mimeType      String   @map("mime_type")
+  fileSizeBytes Int      @map("file_size_bytes")
+  width         Int
+  height        Int
+  sha256        String
+  altText       String   @map("alt_text")
+  coverPosition String   @default("center") @map("cover_position")
+  cropJson      String?  @map("crop_json")
+  isActive      Boolean  @default(true) @map("is_active")
+  uploadedById  Int      @map("uploaded_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  uploadedBy    User     @relation(fields: [uploadedById], references: [id])
+
+  @@index([slot, isActive])
+  @@map("branding_assets")
+}
+
+model SystemSetting {
+  key          String   @id
+  value        String
+  updatedById  Int?     @map("updated_by_id")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  actorUserId Int?     @map("actor_user_id")
+  action      String
+  targetType  String   @map("target_type")
+  targetId    String?  @map("target_id")
+  detailsJson String?  @map("details_json")
+  ipAddress   String?  @map("ip_address")
+  createdAt   DateTime @default(now()) @map("created_at")
+  actor       User?    @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([actorUserId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

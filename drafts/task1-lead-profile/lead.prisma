@@ -13,6 +13,9 @@ model Lead {
   installationAddress String?   @map("installation_address")
 
   sourceId            Int?      @map("source_id")
+  source LeadSource? @relation(fields: [sourceId], references: [id])
+  productId Int? @map("product_id")
+  product   LeadProduct? @relation(fields: [productId], references: [id])
   assignedToId        Int       @map("assigned_to_id")
   customerContactAt   DateTime  @default(now()) @map("customer_contact_at")
 
@@ -35,9 +38,53 @@ model Lead {
   oldLead             Lead?     @relation("RelatedOldLead", fields: [oldLeadId], references: [id])
   relatedLeads        Lead[]    @relation("RelatedOldLead")
 
+  histories LeadHistory[]
+
   @@index([assignedToId])
   @@index([sourceId])
   @@index([status])
   @@index([createdAt])
   @@map("leads")
+}
+
+model LeadSource {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  leads     Lead[]
+
+  @@map("lead_sources")
+}
+
+model LeadProduct {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  leads     Lead[]
+
+  @@map("lead_products")
+}
+
+model LeadHistory {
+  id          Int      @id @default(autoincrement())
+  leadId      Int      @map("lead_id")
+  actorUserId Int      @map("actor_user_id")
+  action      String
+  fieldName   String?  @map("field_name")
+  oldValue    String?  @map("old_value")
+  newValue    String?  @map("new_value")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  lead        Lead     @relation(fields: [leadId], references: [id])
+  actor       User     @relation("LeadHistoryActor", fields: [actorUserId], references: [id])
+
+  @@index([leadId, createdAt])
+  @@index([actorUserId])
+  @@map("lead_histories")
 }
