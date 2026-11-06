@@ -1,0 +1,43 @@
+
+/// DRAFT - Task 1: Ho so Lead
+/// Chi la ban de xuat, chua chay migration.
+
+model Lead {
+  id                  Int       @id @default(autoincrement())
+  phone               String
+  normalizedPhone     String?   @map("normalized_phone")
+  phoneUnverified     Boolean   @default(false) @map("phone_unverified")
+
+  companyName         String?   @map("company_name")
+  projectName         String?   @map("project_name")
+  installationAddress String?   @map("installation_address")
+
+  sourceId            Int?      @map("source_id")
+  assignedToId        Int       @map("assigned_to_id")
+  customerContactAt   DateTime  @default(now()) @map("customer_contact_at")
+
+  receivedById        Int?      @map("received_by_id")
+  receivedAt          DateTime? @map("received_at")
+
+  status              String    @default("NEW")
+  duplicateFlag       Boolean   @default(false) @map("duplicate_flag")
+  oldLeadId           Int?      @map("old_lead_id")
+
+  quotationValue      Decimal?  @map("quotation_value")
+  closingValue        Decimal?  @map("closing_value")
+
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  assignedTo          User      @relation("AssignedLeads", fields: [assignedToId], references: [id])
+  receivedBy          User?     @relation("ReceivedLeads", fields: [receivedById], references: [id])
+
+  oldLead             Lead?     @relation("RelatedOldLead", fields: [oldLeadId], references: [id])
+  relatedLeads        Lead[]    @relation("RelatedOldLead")
+
+  @@index([assignedToId])
+  @@index([sourceId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("leads")
+}
