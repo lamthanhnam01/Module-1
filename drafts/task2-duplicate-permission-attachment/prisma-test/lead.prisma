@@ -1,0 +1,105 @@
+
+/// DRAFT - Task 1: Ho so Lead
+/// Chi la ban de xuat, chua chay migration.
+
+model Lead {
+  id                  Int       @id @default(autoincrement())
+  phone               String
+  normalizedPhone     String?   @map("normalized_phone")
+  phoneUnverified     Boolean   @default(false) @map("phone_unverified")
+
+  companyName         String?   @map("company_name")
+  projectName         String?   @map("project_name")
+  installationAddress String?   @map("installation_address")
+
+  sourceId            Int?      @map("source_id")
+  source LeadSource? @relation(fields: [sourceId], references: [id])
+  productId Int? @map("product_id")
+  product   LeadProduct? @relation(fields: [productId], references: [id])
+  assignedToId        Int       @map("assigned_to_id")
+  customerContactAt   DateTime  @default(now()) @map("customer_contact_at")
+
+  receivedById        Int?      @map("received_by_id")
+  receivedAt          DateTime? @map("received_at")
+
+  status              String    @default("NEW")
+  // --- Task 2 bo sung ---
+  email               String?   @map("email")
+  emailKey            String?   @map("email_key")
+  companyKey          String?   @map("company_key")
+  projectKey          String?   @map("project_key")
+  /// DUPLICATE | HAS_OLD_LEAD | SAME_PHONE_EMAIL (null neu khong trung). Thay cho Boolean cu cua Task 1
+  duplicateFlag       String?   @map("duplicate_flag")
+  isSpam              Boolean   @default(false) @map("is_spam")
+  hasDesignRequest    Boolean   @default(false) @map("has_design_request")
+  failureReason       String?   @map("failure_reason")
+  closedAt            DateTime? @map("closed_at")
+  deletedAt           DateTime? @map("deleted_at")
+  oldLeadId           Int?      @map("old_lead_id")
+
+  quotationValue      Decimal?  @map("quotation_value")
+  closingValue        Decimal?  @map("closing_value")
+
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  assignedTo          User      @relation("AssignedLeads", fields: [assignedToId], references: [id])
+  receivedBy          User?     @relation("ReceivedLeads", fields: [receivedById], references: [id])
+
+  oldLead             Lead?     @relation("RelatedOldLead", fields: [oldLeadId], references: [id])
+  relatedLeads        Lead[]    @relation("RelatedOldLead")
+
+  histories LeadHistory[]
+  attachments LeadAttachment[]
+
+  @@index([assignedToId])
+  @@index([sourceId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([companyKey, projectKey])
+  @@index([normalizedPhone])
+  @@index([emailKey])
+  @@map("leads")
+}
+
+model LeadSource {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  leads     Lead[]
+
+  @@map("lead_sources")
+}
+
+model LeadProduct {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique
+  name      String
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  leads     Lead[]
+
+  @@map("lead_products")
+}
+
+model LeadHistory {
+  id          Int      @id @default(autoincrement())
+  leadId      Int      @map("lead_id")
+  actorUserId Int      @map("actor_user_id")
+  action      String
+  fieldName   String?  @map("field_name")
+  oldValue    String?  @map("old_value")
+  newValue    String?  @map("new_value")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  lead        Lead     @relation(fields: [leadId], references: [id])
+  actor       User     @relation("LeadHistoryActor", fields: [actorUserId], references: [id])
+
+  @@index([leadId, createdAt])
+  @@index([actorUserId])
+  @@map("lead_histories")
+}

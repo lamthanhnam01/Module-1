@@ -1,0 +1,30 @@
+
+/// DRAFT - Task 2: Tai lieu dinh kem cua Lead (anh hien trang, ban ve, ho so khach hang)
+/// Chi la ban de xuat, chua chay migration. Can them quan he nguoc vao Lead va User
+/// (xem drafts/task2-duplicate-permission-attachment/INTEGRATION_NOTES.md).
+
+model LeadAttachment {
+  id           Int       @id @default(autoincrement())
+  leadId       Int       @map("lead_id")
+  uploadedById Int       @map("uploaded_by_id")
+
+  fileName     String    @map("file_name")
+  /// Thu muc tuong doi khi tai ca thu muc ("" neu o goc), vi du "Hien trang/Tang 1"
+  folderPath   String    @default("") @map("folder_path")
+  /// IMAGE | DRAWING | DOCUMENT
+  kind         String
+  mimeType     String    @map("mime_type")
+  sizeBytes    Int       @map("size_bytes")
+  /// Ten luu tru do may chu tu sinh (leads/<leadId>/<uuid>.<ext>), khong dung ten nguoi dung dat
+  storageKey   String    @unique @map("storage_key")
+
+  createdAt    DateTime  @default(now()) @map("created_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  lead         Lead      @relation(fields: [leadId], references: [id])
+  uploadedBy   User      @relation("LeadAttachmentUploader", fields: [uploadedById], references: [id])
+
+  @@index([leadId, folderPath])
+  @@index([uploadedById])
+  @@map("lead_attachments")
+}
