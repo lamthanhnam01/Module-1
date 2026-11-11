@@ -1,0 +1,14 @@
+{
+  "name": "@toantrung/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/common/index.ts",
+  "types": "./src/common/index.ts",
+  "exports": {
+    ".": "./src/common/index.ts",
+    "./common": "./src/common/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

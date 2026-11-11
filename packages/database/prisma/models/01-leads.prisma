@@ -1,0 +1,179 @@
+// Module 01: Quản lý Lead & Pipeline kinh doanh (DFD 1.0 & 2.0, UC01, UC02, Brief Mini CRM)
+// Owner: Nhóm 1 (01-leads)
+
+model Product {
+  id            Int           @id @default(autoincrement())
+  categoryGroup String        @map("category_group") // 'led_screen' | 'electronic_board' | 'other'
+  productCode   String        @unique @map("product_code")
+  productName   String        @map("product_name")
+  unit          String        @default("m2")
+  isActive      Boolean       @default(true) @map("is_active")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  leadProducts  LeadProduct[]
+
+  @@index([categoryGroup, isActive])
+  @@map("products")
+}
+
+model Lead {
+  id                    Int       @id @default(autoincrement())
+  leadCode              String    @unique @map("lead_code")
+  version               Int       @default(1) // Optimistic concurrency control cho nhận/chuyển/đổi trạng thái Lead
+  companyName           String?   @map("company_name")
+  projectName           String?   @map("project_name") // UC01: Tên dự án
+  normalizedLookupKey   String?   @map("normalized_lookup_key") // UC01 4.1: Chuẩn hóa để check trùng Công ty/Dự án
+  // Cho phép null khi tiếp nhận tự động từ form web (chỉ có SĐT + email) hoặc tạo nhanh Hotline/Zalo (Q05: không điền dữ liệu giả)
+  contactName           String?   @map("contact_name")
+  phone                 String    // Không đặt @unique vì một SĐT có thể có nhiều Lead hợp lệ theo thời gian/dự án
+  isPhoneUnstandardized Boolean   @default(false) @map("is_phone_unstandardized") // UC01 E2: SĐT chưa chuẩn hóa
+  email                 String?
+  contactChannel        String    @map("contact_channel") // 'hotline' | 'form_web' | 'email' | 'fanpage' | 'zalo' | 'google_lead_form'
+  sourceWebsite         String?   @map("source_website") // 'toantrung.com.vn' | 'bangled.vn' | 'manhinhled.net.vn' | ...
+  selfReportedSource    String?   @map("self_reported_source") // UC01/UC03: Nguồn khách tự khai (chỉ lưu đối chiếu)
+  areaType              String?   @map("area_type") // 'tphcm' | 'other_province' (bổ sung sau khi tạo nhanh/webhook)
+  province              String?   // Tỉnh/thành (bổ sung sau khi tạo nhanh/webhook)
+  district              String?
+  installationAddress   String?   @map("installation_address")
+  pipelineStatus        String    @default("new_lead") @map("pipeline_status") // 'new_lead' | 'quoting' | 'quote_sent' | 'won' | 'lost'
+  lostReason            String?   @map("lost_reason") // UC02: Bắt buộc khi chuyển sang 'lost'
+
+  // Trường tài chính giữ ở DB dưới dạng BigInt (đơn vị VNĐ nguyên) nhưng chưa tự động phơi bày trên UI (Q08 đang mở)
+  currencyCode          String    @default("VND") @map("currency_code")
+  quoteValueVnd         BigInt?   @map("quote_value") // UC02 3.1: Giá trị báo giá (VNĐ)
+  dealValueVnd          BigInt?   @map("deal_value") // UC02 3.1: Giá trị chốt (VNĐ)
+
+  assignedSalesId       Int?      @map("assigned_sales_id")
+  // Nguồn gốc tác nhân tạo Lead: tránh gán Admin giả cho Lead tự động từ Webhook (PERMISSIONS.md & Q12)
+  createdByUserId       Int?      @map("created_by_user_id")
+  createdByActorType    String    @default("user") @map("created_by_actor_type") // 'user' | 'webhook' | 'system'
+  createdByActorRef     String?   @map("created_by_actor_ref") // VD: 'user:2' | 'webhook:toantrung.com.vn' | 'webhook:google_lead_form'
+  receivedByUserId      Int?      @map("received_by_user_id") // UC01 Bước 9: Xác nhận tiếp nhận
+
+  // Cảnh báo trùng lặp, dò giá & Spam (UC01 4.1, 4.4, 4.5, Brief Mini CRM)
+  isDuplicateAlert       Boolean  @default(false) @map("is_duplicate_alert")
+  duplicateStatus        String   @default("none") @map("duplicate_status") // 'none' | 'duplicate_red' | 'has_old_lead' | 'same_phone_email'
+  matchedOldLeadId       Int?     @map("matched_old_lead_id")
+  isSuspectedPriceCheck  Boolean  @default(false) @map("is_suspected_price_check") // UC01 4.5: Cờ Nghi ngờ dò giá
+  isSpam                 Boolean  @default(false) @map("is_spam") // UC01 4.4: Cờ Spam (tách khỏi Pipeline chính)
+  spamReason             String?  @map("spam_reason")
+  spamAdsExclusionStatus String   @default("none") @map("spam_ads_exclusion_status") // 'none' | 'auto_excluded' | 'pending_confirm' | 'confirmed_excluded' | 'restored'
+
+  // SLA, mở lại, theo dõi phản hồi báo giá & luân chuyển tự động (UC01 Bước 9-12, UC02 2a, 4.1, DFD 2.0)
+  autoReassignCount     Int       @default(0) @map("auto_reassign_count") // Tối đa N lần, sau đó gắn cờ Quản lý
+  needsManagerAttention Boolean   @default(false) @map("needs_manager_attention") // UC01 Bước 12 / E8: Cờ Cần Quản lý xử lý
+  reopenCount           Int       @default(0) @map("reopen_count") // UC02 2a: Mở lại tối đa 1 lần trong X ngày
+  contactedAt           DateTime  @default(now()) @map("contacted_at") // UC01: Thời điểm khách liên hệ
+  receivedAt            DateTime? @map("received_at") // UC01 Bước 9: Thời điểm bấm Xác nhận tiếp nhận
+  firstQuoteSentAt      DateTime? @map("first_quote_sent_at") // UC02: Mốc gửi báo giá lần đầu
+  quoteRespondedAt      DateTime? @map("quote_responded_at") // DFD 2.0 / Q09: Mốc khách phản hồi sau khi nhận báo giá
+  lastQuoteReminderAt   DateTime? @map("last_quote_reminder_at") // Chống nhắc lặp cảnh báo báo giá quá 7 ngày
+  statusChangedAt       DateTime  @default(now()) @map("status_changed_at") // UC02 4.1: Mốc đổi trạng thái gần nhất
+  closedAt              DateTime? @map("closed_at") // UC02: Mốc đóng won/lost
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  assignedSales    User?              @relation("LeadAssignedSales", fields: [assignedSalesId], references: [id], onDelete: SetNull)
+  createdBy        User?              @relation("LeadCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  receivedBy       User?              @relation("LeadReceivedBy", fields: [receivedByUserId], references: [id], onDelete: SetNull)
+  matchedOldLead   Lead?              @relation("LeadDuplicateHistory", fields: [matchedOldLeadId], references: [id], onDelete: SetNull)
+  duplicateLeads   Lead[]             @relation("LeadDuplicateHistory")
+  leadProducts     LeadProduct[]
+  attachments      LeadAttachment[]
+  activities       LeadActivity[]
+  priceCheckAlerts PriceCheckAlert[]
+  tracking         MarketingTracking?
+  designRequests   DesignRequest[]
+
+  @@index([phone])
+  @@index([email])
+  @@index([normalizedLookupKey])
+  @@index([pipelineStatus, isSpam])
+  @@index([isSpam, spamAdsExclusionStatus])
+  @@index([assignedSalesId, pipelineStatus])
+  @@index([createdAt])
+  @@map("leads")
+}
+
+model LeadProduct {
+  id                 Int      @id @default(autoincrement())
+  leadId             Int      @map("lead_id")
+  productId          Int      @map("product_id")
+  customProductName  String?  @map("custom_product_name") // Brief Mini CRM: Ô nhập thông tin khi chọn "Khác"
+  requestedDimension String?  @map("requested_dimension") // Kích thước yêu cầu (VD: Ngang 4m x Cao 2.5m)
+  noteSpecification  String?  @map("note_specification")
+  createdAt          DateTime @default(now()) @map("created_at")
+  lead               Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  product            Product  @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  @@index([leadId])
+  @@index([productId])
+  @@map("lead_products")
+}
+
+model LeadAttachment {
+  id             Int      @id @default(autoincrement())
+  leadId         Int      @map("lead_id")
+  attachmentType String   @map("attachment_type") // 'site_photo' | 'customer_drawing_doc'
+  folderPath     String?  @map("folder_path") // UC01 4.3: Giữ cấu trúc thư mục con của bộ hồ sơ dự án
+  fileName       String   @map("file_name")
+  fileUrl        String   @map("file_url") // Lưu storage key riêng tư, tải qua API kiểm tra quyền ATTACHMENT_UPLOAD_VIEW
+  fileSizeKb     Int      @map("file_size_kb")
+  uploadedById   Int      @map("uploaded_by")
+  uploadedAt     DateTime @default(now()) @map("uploaded_at")
+  lead           Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  uploadedBy     User     @relation("LeadAttachmentUploadedBy", fields: [uploadedById], references: [id])
+
+  @@index([leadId, attachmentType])
+  @@map("lead_attachments")
+}
+
+model LeadActivity {
+  id             Int      @id @default(autoincrement())
+  leadId         Int      @map("lead_id")
+  actionType     String   @map("action_type") // 'create_lead' | 'confirm_receive' | 'update_info' | 'reassign_sales' | 'auto_reassign' | 'status_change' | 'reopen_lead' | 'mark_spam' | 'restore_spam' | 'price_check_alert' | 'upload_attachment' | 'add_note' | 'tracking_update'
+  fromSalesId    Int?     @map("from_sales_id")
+  toSalesId      Int?     @map("to_sales_id")
+  transferReason String?  @map("transfer_reason") // UC01 6a / UC02 2b: Lý do chuyển Lead
+  oldStatus      String?  @map("old_status")
+  newStatus      String?  @map("new_status")
+  oldValueJson   String?  @map("old_value_json") // UC01 6b / UC03 Luồng C: Giá trị cũ khi sửa
+  newValueJson   String?  @map("new_value_json") // Giá trị mới khi sửa
+  note           String?
+  actionById     Int?     @map("action_by") // Nullable khi tác nhân là webhook hoặc job hệ thống tự động
+  actorType      String   @default("user") @map("actor_type") // 'user' | 'webhook' | 'system'
+  actorRef       String?  @map("actor_ref")
+  createdAt      DateTime @default(now()) @map("created_at")
+  lead           Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  actionBy       User?    @relation("LeadActivityActor", fields: [actionById], references: [id], onDelete: SetNull)
+  fromSales      User?    @relation("LeadActivityFromSales", fields: [fromSalesId], references: [id], onDelete: SetNull)
+  toSales        User?    @relation("LeadActivityToSales", fields: [toSalesId], references: [id], onDelete: SetNull)
+
+  @@index([leadId, createdAt])
+  @@index([actionById])
+  @@map("lead_activities")
+}
+
+model PriceCheckAlert {
+  id                  Int       @id @default(autoincrement())
+  leadId              Int       @map("lead_id")
+  phone               String
+  companyName         String?   @map("company_name")
+  normalizedLookupKey String?   @map("normalized_lookup_key")
+  reason              String    // UC01 4.5: Căn cứ xác định dò giá
+  chatScreenshotUrl   String?   @map("chat_screenshot_url") // Storage key riêng tư của ảnh chụp nội dung chat minh chứng
+  status              String    @default("active") // 'active' | 'removed'
+  previousAlertId     Int?      @map("previous_alert_id") // UC01 4.5: Lưu vết khi tạo lại sau khi gỡ
+  createdByUserId     Int       @map("created_by_user_id")
+  removedByUserId     Int?      @map("removed_by_user_id")
+  removedAt           DateTime? @map("removed_at")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  lead                Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  createdBy           User      @relation("PriceCheckCreatedBy", fields: [createdByUserId], references: [id])
+  removedBy           User?     @relation("PriceCheckRemovedBy", fields: [removedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([phone, status])
+  @@index([normalizedLookupKey, status])
+  @@index([leadId])
+  @@map("price_check_alerts")
+}

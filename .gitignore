@@ -1,8 +1,27 @@
+# Dependencies and generated app output
 node_modules/
+.next/
+dist/
+build/
+coverage/
+*.log
+*.tsbuildinfo
+# Local database & protected upload storage
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-journal
+/storage/
+/storage_independent_v2/
+/storage*/
+# Local credentials; retain a non-secret template
 .env
 .env.*
 !.env.example
-*.db
-*.db-journal
-*.db-shm
-*.db-wal
+# Regenerate context for each task instead of committing stale packets
+.ai-context/
+docs/tasks/**/*.local.json
+# OS / editor temporary files
+.DS_Store
+Thumbs.db
+*.swp

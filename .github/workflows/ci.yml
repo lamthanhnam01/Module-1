@@ -1,0 +1,65 @@
+name: ToanTrung V2 CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  verify-core-and-governance:
+    name: Governance, Typecheck & Core Security Tests
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "file:./independent_v2.db"
+      SESSION_SECRET: "ci-ephemeral-session-secret-minimum-32-chars-2026"
+      STORAGE_ROOT: "./storage"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Verify documentation & links
+        run: npm run check:docs
+
+      - name: Run governance tooling tests
+        run: npm run test:tooling
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma Client, Push & Seed local test schema
+        run: |
+          npm run db:generate
+          npm run db:push
+          npm run db:seed
+          cp packages/database/prisma/independent_v2.db packages/database/prisma/dev.db
+
+      - name: Run Core security & RBAC unit tests
+        run: |
+          for test_file in \
+            apps/api/src/core/__tests__/core-security.test.js \
+            apps/api/src/core/__tests__/database-shared-schema.test.js; do
+            echo "::group::Running $test_file"
+            if ! node --test --test-reporter spec "$test_file" 2>&1 | tee test_out.log; then
+              echo "::endgroup::"
+              echo "### ❌ Test Failed: \`$test_file\`" >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              cat test_out.log >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+              exit 1
+            fi
+            echo "::endgroup::"
+            echo "✅ $test_file passed"
+          done
+
+      - name: Run TypeScript typecheck across workspaces
+        run: npm run typecheck
+

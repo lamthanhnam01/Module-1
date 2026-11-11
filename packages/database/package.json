@@ -1,0 +1,20 @@
+{
+  "name": "@toantrung/database",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "prisma": {
+    "schema": "prisma"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "db:generate": "prisma generate --schema=prisma",
+    "db:migrate:deploy": "node scripts/migrate-deploy.js",
+    "db:push": "prisma db push --schema=prisma",
+    "db:seed": "node scripts/seed.js"
+  }
+}

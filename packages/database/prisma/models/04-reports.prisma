@@ -1,0 +1,7 @@
+// Module 04: Báo cáo, Dashboard & Xuất dữ liệu (DFD 4.0, UC04, Brief Mini CRM Mục 6)
+// Owner: Nhóm 4 (04-reports)
+// Theo quy tắc thiết kế tại docs/database/README.md và TABLE_OWNERSHIP.md:
+// Module 04 chỉ đọc dữ liệu tổng hợp từ các kho D1 (M01), D3 (M02), D4 (M03), D5 (Core AiUsageLog), D6 (M05)
+// thông qua read contract đã kiểm tra phạm vi quyền 8 vai trò BA.
+// Không tạo bảng lưu trữ riêng mang tính suy đoán (như report_export_logs) khi BA chưa yêu cầu lưu lịch sử file xuất riêng biệt.
+// Nhật ký kiểm toán các thao tác nhạy cảm (nếu cần) sử dụng bảng chung AuditLog trong core.prisma.

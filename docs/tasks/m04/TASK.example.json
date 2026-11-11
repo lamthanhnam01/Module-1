@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "M04-TODO",
+  "status": "template",
+  "modules": [
+    "04-reports"
+  ],
+  "title": "MẪU — thay bằng kết quả được giao",
+  "goal": "Chưa có nhiệm vụ thực tế. Điền từ yêu cầu người dùng trước khi chuyển ready.",
+  "acceptanceCriteria": [],
+  "allowedSharedPaths": [],
+  "readWhenNeeded": [
+    "docs/modules/04-reports.md"
+  ],
+  "notes": "Chỉ sửa cục bộ. Không tự push/deploy. Không tự mở rộng module hoặc đổi quyền BA."
+}

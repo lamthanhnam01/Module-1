@@ -7,6 +7,6 @@ generator client {
 // Production architecture targets PostgreSQL with a single shared migration history.
 datasource db {
   provider = "sqlite"
-  url      = env("DATABASE_URL")
+  url      = "file:./independent_v2.db"
 }
 

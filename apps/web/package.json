@@ -1,0 +1,15 @@
+{
+  "name": "@toantrung/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "node -r ../../scripts/fix-windows-mkdir.js ../../node_modules/next/dist/bin/next dev -p 3000",
+    "build": "node -r ../../scripts/fix-windows-mkdir.js ../../node_modules/next/dist/bin/next build",
+    "start": "node -r ../../scripts/fix-windows-mkdir.js ../../node_modules/next/dist/bin/next start -p 3000",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@toantrung/api": "*",
+    "@toantrung/contracts": "*"
+  }
+}

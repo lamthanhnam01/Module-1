@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brand-primary: #1553A2;
+  --brand-primary-soft: #EFF5FF;
+  --kpi-violet: #7846FF;
+  --kpi-violet-soft: #F7F4FF;
+  --kpi-amber: #F59E0B;
+  --kpi-amber-soft: #FFFBEB;
+  --kpi-emerald: #0BAF7C;
+  --kpi-emerald-soft: #F0FDF7;
+  --bg-canvas: #F5F7FC;
+  --text-ink: #17253F;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--bg-canvas);
+  color: var(--text-ink);
+  font-family: 'Be Vietnam Pro', Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, .font-display {
+  font-family: 'Plus Jakarta Sans', 'Be Vietnam Pro', system-ui, sans-serif;
+}
+
+.font-mono, .tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+

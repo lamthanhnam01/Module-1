@@ -1,0 +1,12 @@
+{
+  "name": "@toantrung/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@toantrung/contracts": "*",
+    "@toantrung/database": "*"
+  }
+}

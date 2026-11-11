@@ -1,0 +1,42 @@
+{
+  "name": "toantrung-workspace",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "postinstall": "npm run db:generate",
+    "dev": "npm --workspace @toantrung/web run dev",
+    "build": "npm run db:generate && npm run db:migrate:deploy && npm run db:seed && npm --workspace @toantrung/web run build",
+    "start": "npm run db:migrate:deploy && npm run db:seed && npm --workspace @toantrung/web run start",
+    "typecheck": "npm --workspace @toantrung/contracts run typecheck && npm --workspace @toantrung/database run typecheck && npm --workspace @toantrung/api run typecheck && npm --workspace @toantrung/web run typecheck",
+    "db:generate": "npm --workspace @toantrung/database run db:generate",
+    "db:migrate:deploy": "npm --workspace @toantrung/database run db:migrate:deploy",
+    "db:push": "npm --workspace @toantrung/database run db:push",
+    "db:seed": "npm --workspace @toantrung/database run db:seed",
+    "test:core": "node --test --test-concurrency=1 apps/api/src/core/__tests__/*.test.js",
+    "check:scope": "node scripts/check-scope.js",
+    "context:task": "node scripts/prepare-context.js",
+    "check:docs": "node scripts/check-docs.js",
+    "test:tooling": "node --test tests/tooling/*.test.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.19",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.2",
+    "prisma": "5.22.0",
+    "tailwindcss": "^3.4.17",
+    "typescript": "~5.7.3"
+  },
+  "dependencies": {
+    "@prisma/client": "5.22.0",
+    "lucide-react": "^0.468.0",
+    "next": "14.2.35",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "zod": "^3.24.2"
+  }
+}

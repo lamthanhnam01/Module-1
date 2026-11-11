@@ -1,0 +1,176 @@
+// Module 02: Tracking nguồn và đồng bộ dữ liệu (DFD 3.0, Kho D3, UC03)
+// Owner: Nhóm 2 (02-tracking-sync)
+
+model Campaign {
+  id                Int                   @id @default(autoincrement())
+  platform          String                @default("google_ads") // 'google_ads' | 'facebook' | 'zalo' | 'other'
+  accountExternalId String                @default("default") @map("account_external_id") // Phân biệt nhiều tài khoản quảng cáo
+  campaignCode      String                @map("campaign_code")
+  campaignName      String                @map("campaign_name")
+  utmCampaignSlug   String?               @map("utm_campaign_slug") // UC03 A3: Đối chiếu với utm_campaign
+  currencyCode      String                @default("VND") @map("currency_code")
+  dailyBudgetMicros BigInt?               @map("daily_budget_micros") // 1 đơn vị tiền tệ = 1,000,000 micros (giữ nguyên độ chính xác Google Ads)
+  isActive          Boolean               @default(true) @map("is_active")
+  createdAt         DateTime              @default(now()) @map("created_at")
+  updatedAt         DateTime              @updatedAt @map("updated_at")
+  trackings         MarketingTracking[]
+  dailyMetrics      PlatformDailyMetric[]
+
+  @@unique([platform, accountExternalId, campaignCode], name: "uq_campaign_platform_account_code")
+  @@index([utmCampaignSlug])
+  @@index([platform, isActive])
+  @@map("campaigns")
+}
+
+model MarketingTracking {
+  id                     Int       @id @default(autoincrement())
+  leadId                 Int       @unique @map("lead_id") // Quan hệ 1-1 với bảng leads theo BA ERD
+  campaignId             Int?      @map("campaign_id")
+  intakeChannel          String    @default("form_web") @map("intake_channel") // UC03 BR6: Kênh tiếp nhận ('form_web' | 'google_lead_form' | 'hotline' | 'zalo' | 'fanpage' | 'email')
+  // Định danh chống lặp (Idempotency) phân tách theo đúng nguồn/tài khoản/website + mã sự kiện
+  intakeSourceProvider   String    @default("manual") @map("intake_source_provider") // 'website_webhook' | 'google_lead_form' | 'manual'
+  intakeSourceAccountKey String    @default("internal") @map("intake_source_account_key") // VD: 'toantrung.com.vn' | 'bangled.vn' | 'manhinhled.net.vn' | 'gads:123-456-7890'
+  externalSubmissionId   String?   @map("external_submission_id") // Submission ID / Google Lead ID trong phạm vi nguồn đó
+
+  marketingSource        String    @default("Chưa xác định") @map("marketing_source") // UC03 Luồng A: 'Google Ads' | 'Tìm kiếm tự nhiên' | 'Mạng xã hội' | 'Website giới thiệu' | 'Truy cập trực tiếp' | 'Khác' | 'Chưa xác định' | 'Nhập tay'
+  sourceResolutionMethod String    @default("unknown") @map("source_resolution_method") // UC03 Bước 3: 'google_lead_form' | 'gclid' | 'gclid_retried' | 'utm_temp' | 'utm' | 'referrer' | 'manual' | 'unknown'
+  utmSource              String?   @map("utm_source")
+  utmMedium              String?   @map("utm_medium")
+  utmCampaign            String?   @map("utm_campaign")
+  campaignName           String?   @map("campaign_name")
+  gclid                  String?
+  referrerUrl            String?   @map("referrer_url")
+  landingPageUrl         String?   @map("landing_page_url")
+  deviceType             String?   @map("device_type")
+  ipAddress              String?   @map("ip_address") // Cấm gửi sang AI (DATA_SAFETY)
+  geoLocation            String?   @map("geo_location")
+
+  // Các cờ kiểm soát chất lượng tracking theo UC03 (A1, A2, A3, BR2, BR4)
+  isUnknownSource    Boolean   @default(false) @map("is_unknown_source") // Cờ Chưa xác định nguồn
+  isUnknownCampaign  Boolean   @default(false) @map("is_unknown_campaign") // Cờ Chưa rõ chiến dịch
+  isUtmGclidMismatch Boolean   @default(false) @map("is_utm_gclid_mismatch") // UC03 BR4: UTM lệch gclid
+  isUnmatchedUtm     Boolean   @default(false) @map("is_unmatched_utm") // UC03 A3: UTM chưa khớp danh mục chiến dịch
+  isRepeatLead       Boolean   @default(false) @map("is_repeat_lead") // UC03 BR2: Lead lặp trong X ngày (không tính trùng vào KPI Ads)
+  gclidRetryCount    Int       @default(0) @map("gclid_retry_count") // UC03 A2: Thử lại trong 7 ngày
+  gclidLastTriedAt   DateTime? @map("gclid_last_tried_at")
+  syncGa4Status      String    @default("pending") @map("sync_ga4_status") // BA ERD: 'synced' | 'pending' | 'failed'
+  trackedAt          DateTime  @default(now()) @map("tracked_at")
+
+  lead     Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@unique([intakeSourceProvider, intakeSourceAccountKey, externalSubmissionId], name: "uq_tracking_source_submission")
+  @@index([marketingSource])
+  @@index([campaignId])
+  @@index([gclid])
+  @@index([isUnknownCampaign, trackedAt])
+  @@index([trackedAt])
+  @@map("marketing_tracking")
+}
+
+// Nguồn số liệu chuẩn duy nhất (Canonical Metric Store - Kho D3) cho cả M02, M03 và M04
+model PlatformDailyMetric {
+  id                    Int       @id @default(autoincrement())
+  platform              String    // 'google_ads' | 'ga4' | 'search_console' | 'fanpage' | 'google_trends'
+  accountPropertyId     String    @map("account_property_id") // Tài khoản Ads / GA4 Property / GSC Site URL / Fanpage ID
+  metricDate            String    @map("metric_date") // YYYY-MM-DD (UC03 Luồng B: chốt sổ T-1..T-7 / T-30)
+  grain                 String    // 'account' | 'campaign' | 'keyword' | 'page' | 'topic'
+  // Các khóa định danh chiều đã chuẩn hóa (không null, mặc định "" khi chiều đó không áp dụng cho grain)
+  campaignExternalId    String    @default("") @map("campaign_external_id")
+  keywordMatchType      String    @default("") @map("keyword_match_type") // 'EXACT' | 'PHRASE' | 'BROAD' | ''
+  keywordTextNorm       String    @default("") @map("keyword_text_norm") // Chữ thường đã trim
+  pagePathNorm          String    @default("") @map("page_path_norm")
+  dimensionFingerprint  String    @map("dimension_fingerprint") // Chuỗi chuẩn hóa đầy đủ của toàn bộ chiều
+
+  campaignId            Int?      @map("campaign_id")
+  campaignName          String?   @map("campaign_name")
+  keywordRaw            String?   @map("keyword")
+  pageUrlRaw            String?   @map("page_url")
+
+  // Tiền tệ lưu theo micros (BigInt: 1 đơn vị = 1,000,000 micros) để bảo toàn phần lẻ CPC/chi phí gốc từ Google Ads
+  currencyCode          String    @default("VND") @map("currency_code")
+  spendMicros           BigInt    @default(0) @map("spend_micros")
+  dailyBudgetMicros     BigInt?   @map("daily_budget_micros")
+  cpcMicros             BigInt?   @map("cpc_micros")
+
+  impressions           Int       @default(0)
+  clicks                Int       @default(0)
+  conversionsMicros     BigInt    @default(0) @map("conversions_micros") // Hỗ trợ chuyển đổi phân số (data-driven attribution)
+  googleLeadFormCount   Int       @default(0) @map("google_lead_form_count") // Dùng đối soát UC03 Luồng D
+  pageViews             Int       @default(0) @map("page_views")
+  avgTimeOnPageSec      Float     @default(0) @map("avg_time_on_page_sec")
+  avgPosition           Float?    @map("avg_position")
+  fanpageEngagements    Int       @default(0) @map("fanpage_engagements")
+  trendInterestScore    Int?      @map("trend_interest_score")
+  isFinalized           Boolean   @default(false) @map("is_finalized") // True khi đã qua cửa sổ chốt sổ
+  syncedAt              DateTime  @default(now()) @map("synced_at")
+
+  campaign              Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@unique([platform, accountPropertyId, metricDate, grain, campaignExternalId, keywordMatchType, keywordTextNorm, pagePathNorm], name: "uq_platform_metric_scope")
+  @@index([platform, metricDate, grain])
+  @@index([platform, grain, metricDate])
+  @@index([campaignId, metricDate])
+  @@index([campaignId, grain])
+  @@index([keywordTextNorm, metricDate])
+  @@map("platform_daily_metrics")
+}
+
+model PlatformSyncLog {
+  id                  Int       @id @default(autoincrement())
+  platform            String    // 'google_ads' | 'ga4' | 'search_console' | 'fanpage' | 'google_trends'
+  accountPropertyId   String    @default("default") @map("account_property_id")
+  runType             String    @default("full") @map("run_type") // 'full' | 'light' | 'gclid_retry'
+  windowStartDate     String?   @map("window_start_date")
+  windowEndDate       String?   @map("window_end_date")
+  recordsSynced       Int       @default(0) @map("records_synced")
+  status              String    @default("success") // 'success' | 'failed'
+  errorMessage        String?   @map("error_message")
+  consecutiveFailures Int       @default(0) @map("consecutive_failures") // UC03 E2: Cảnh báo Admin khi lỗi 3 lần liên tiếp
+  startedAt           DateTime  @default(now()) @map("started_at")
+  completedAt         DateTime? @map("completed_at")
+
+  @@index([platform, accountPropertyId, startedAt])
+  @@map("platform_sync_logs")
+}
+
+model LeadReconciliation {
+  id                    Int       @id @default(autoincrement())
+  reconcileDate         String    @map("reconcile_date") // YYYY-MM-DD (UC03 Luồng D: đối soát ngày T-1)
+  platform              String    @default("google_ads") // 'google_ads' | 'ga4_web'
+  accountPropertyId     String    @default("default") @map("account_property_id")
+  crmLeadCount          Int       @default(0) @map("crm_lead_count")
+  crmErrorLogCount      Int       @default(0) @map("crm_error_log_count")
+  platformReportedCount Int       @default(0) @map("platform_reported_count")
+  discrepancy           Int       @default(0)
+  status                String    @default("ok") // 'ok' | 'alert_open' | 'resolved'
+  resolvedByUserId      Int?      @map("resolved_by_user_id")
+  resolutionNote        String?   @map("resolution_note") // UC03 Luồng D Bước 5: Ghi chú nguyên nhân lệch
+  resolvedAt            DateTime? @map("resolved_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  resolvedBy            User?     @relation("ReconciliationResolvedBy", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([reconcileDate, platform, accountPropertyId], name: "uq_reconcile_date_platform_account")
+  @@index([status])
+  @@map("lead_reconciliations")
+}
+
+model WebhookIntakeErrorLog {
+  id                     Int       @id @default(autoincrement())
+  sourcePlatform         String    @map("source_platform") // 'website_webhook' | 'google_lead_form'
+  intakeSourceAccountKey String    @default("unknown") @map("intake_source_account_key") // VD: 'toantrung.com.vn' | 'gads:123'
+  externalSubmissionId   String?   @map("external_submission_id")
+  rawPayloadJson         String    @map("raw_payload_json")
+  errorCode              String    @map("error_code")
+  errorMessage           String    @map("error_message")
+  retryCount             Int       @default(0) @map("retry_count")
+  lastRetriedAt          DateTime? @map("last_retried_at")
+  isResolved             Boolean   @default(false) @map("is_resolved")
+  resolvedLeadId         Int?      @map("resolved_lead_id")
+  createdAt              DateTime  @default(now()) @map("created_at")
+
+  @@unique([sourcePlatform, intakeSourceAccountKey, externalSubmissionId], name: "uq_webhook_error_source_submission")
+  @@index([sourcePlatform, createdAt])
+  @@map("webhook_intake_error_logs")
+}

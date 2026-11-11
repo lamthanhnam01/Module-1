@@ -1,5 +1,5 @@
-// Core schema (DFD 7.0: Users, Roles, Sessions, Notifications, System/Branding Settings, Audit Trail)
-// Five business modules (01-leads .. 05-ai-design) will add their own .prisma files in this folder.
+// Core schema (DFD 7.0 & Shared D5 AI Usage Log: Users, Roles, Sessions, Notifications, System/Branding Settings, Audit Trail, AI Usage)
+// Five business modules (01-leads .. 05-ai-design) own their dedicated .prisma files in this folder.
 
 model Role {
   id          Int      @id @default(autoincrement())
@@ -13,31 +13,54 @@ model Role {
 }
 
 model User {
-  id             Int             @id @default(autoincrement())
-  roleId         Int             @map("role_id")
-  fullName       String          @map("full_name")
-  email          String          @unique
-  phone          String?
-  passwordHash   String          @map("password_hash")
-  department     String          @default("sales")
-  avatarUrl      String?         @map("avatar_url")
-  isActive       Boolean         @default(true) @map("is_active")
-  deletedAt      DateTime?       @map("deleted_at")
-  createdAt      DateTime        @default(now()) @map("created_at")
-  updatedAt      DateTime        @updatedAt @map("updated_at")
-  role           Role            @relation(fields: [roleId], references: [id])
-  sessions       UserSession[]
-  notifications  Notification[]
-  uploadedAssets BrandingAsset[]
-  auditLogs      AuditLog[]
+  id               Int             @id @default(autoincrement())
+  roleId           Int             @map("role_id")
+  fullName         String          @map("full_name")
+  email            String          @unique
+  phone            String?
+  passwordHash     String          @map("password_hash")
+  department       String          @default("sales") // 'marketing' | 'sales' | 'management' | 'admin'
+  specialtyGroup   String?         @map("specialty_group") // 'led_screen' | 'electronic_board' | 'other' (UC01/UC02: phân bổ theo nhóm SP thế mạnh)
+  isReceivingLeads Boolean         @default(true) @map("is_receiving_leads") // UC01/UC02: trạng thái nhận Lead (tách khỏi is_active)
+  isOnline         Boolean         @default(false) @map("is_online") // UC01/UC02: trạng thái online khi điều phối
+  avatarUrl        String?         @map("avatar_url")
+  isActive         Boolean         @default(true) @map("is_active")
+  deletedAt        DateTime?       @map("deleted_at")
+  createdAt        DateTime        @default(now()) @map("created_at")
+  updatedAt        DateTime        @updatedAt @map("updated_at")
+  role             Role            @relation(fields: [roleId], references: [id])
+  sessions         UserSession[]
+  notifications    Notification[]
+  uploadedAssets   BrandingAsset[]
+  auditLogs        AuditLog[]
+  aiUsageLogs      AiUsageLog[]    @relation("AiUsageUser")
 
+  // Quan hệ ngược sang Module 01 (Quản lý Lead & Pipeline)
+  assignedLeads           Lead[]            @relation("LeadAssignedSales")
+  createdLeads            Lead[]            @relation("LeadCreatedBy")
+  receivedLeads           Lead[]            @relation("LeadReceivedBy")
+  uploadedLeadAttachments LeadAttachment[]  @relation("LeadAttachmentUploadedBy")
+  leadActivities          LeadActivity[]    @relation("LeadActivityActor")
+  activitiesFromSales     LeadActivity[]    @relation("LeadActivityFromSales")
+  activitiesToSales       LeadActivity[]    @relation("LeadActivityToSales")
+  priceCheckAlertsCreated PriceCheckAlert[] @relation("PriceCheckCreatedBy")
+  priceCheckAlertsRemoved PriceCheckAlert[] @relation("PriceCheckRemovedBy")
 
-  assignedLeads Lead[] @relation("AssignedLeads")
-  receivedLeads Lead[] @relation("ReceivedLeads")
-  leadHistories LeadHistory[] @relation("LeadHistoryActor")
+  // Quan hệ ngược sang Module 02 (Tracking & Đồng bộ)
+  resolvedReconciliations LeadReconciliation[] @relation("ReconciliationResolvedBy")
 
+  // Quan hệ ngược sang Module 03 (Nội dung SEO tích hợp AI)
+  seoArticlesCreated  SeoArticle[]         @relation("SeoArticleCreatedBy")
+  seoArticlesApproved SeoArticle[]         @relation("SeoArticleApprovedBy")
+  seoArticleRevisions SeoArticleRevision[] @relation("SeoRevisionEditedBy")
+
+  // Quan hệ ngược sang Module 05 (Hỗ trợ Thiết kế & Phối cảnh AI)
+  designRequestsCreated       DesignRequest[]      @relation("DesignRequestedBySales")
+  designRequestsAssigned      DesignRequest[]      @relation("DesignAssignedDesigner")
+  designAssetVersionsUploaded DesignAssetVersion[] @relation("DesignAssetUploadedBy")
 
   @@index([roleId])
+  @@index([department, isActive, isReceivingLeads])
   @@index([deletedAt])
   @@map("users")
 }
@@ -121,4 +144,39 @@ model AuditLog {
   @@index([actorUserId])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// Kho D5 trong DFD: Nhật ký sử dụng AI dùng chung (Owner ghi: Core contract; Consumer phát sinh: M03 & M05; Đọc báo cáo: M04)
+model AiUsageLog {
+  id                Int                 @id @default(autoincrement())
+  idempotencyKey    String              @unique @map("idempotency_key") // Chống nhân bản khi callback lặp nhưng giữ riêng từng lần thử thật
+  attemptNumber     Int                 @default(1) @map("attempt_number")
+  providerRequestId String?             @map("provider_request_id")
+  moduleCode        String              @map("module_code") // '03-keywords-ads' | '05-ai-design'
+  taskType          String              @map("task_type") // 'seo_outline' | 'seo_draft' | '3d_perspective' | 'banner'
+  userId            Int                 @map("user_id")
+  designRequestId   Int?                @map("design_request_id")
+  seoArticleId      Int?                @map("seo_article_id")
+  modelName         String              @default("gemini-2.5-flash") @map("model_name")
+  // Nullable khi provider không trả về hoặc lượt gọi lỗi/timeout (DATA_SAFETY: không ghi số 0 giả)
+  promptTokens      Int?                @map("prompt_tokens")
+  completionTokens  Int?                @map("completion_tokens")
+  totalTokens       Int?                @map("total_tokens")
+  costMicros        BigInt?             @map("cost_micros") // 1 đơn vị tiền tệ = 1,000,000 micros (giữ nguyên phần lẻ, không tự quy đổi tỷ giá)
+  costCurrency      String?             @map("cost_currency") // 'USD' | 'VND' theo đúng đơn vị provider trả về
+  durationMs        Int?                @map("duration_ms") // Ghi nhận mỗi khi đo được, kể cả khi failed/timeout
+  status            String              @default("success") // 'success' | 'failed' | 'timeout'
+  errorMessage      String?             @map("error_message")
+  createdAt         DateTime            @default(now()) @map("created_at")
+
+  user               User                @relation("AiUsageUser", fields: [userId], references: [id])
+  designRequest      DesignRequest?      @relation(fields: [designRequestId], references: [id], onDelete: SetNull)
+  seoArticle         SeoArticle?         @relation(fields: [seoArticleId], references: [id], onDelete: SetNull)
+  designAssetVersion DesignAssetVersion?
+
+  @@index([moduleCode, createdAt])
+  @@index([userId, createdAt])
+  @@index([designRequestId])
+  @@index([seoArticleId])
+  @@map("ai_usage_logs")
 }

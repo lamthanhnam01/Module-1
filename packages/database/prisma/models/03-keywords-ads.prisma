@@ -1,0 +1,97 @@
+// Module 03: Nội dung SEO tích hợp AI & Phân tích Từ khóa/Ads (DFD 5.0, Kho D4, UC05)
+// Owner: Nhóm 3 (03-keywords-ads)
+// Lưu ý: Nguồn số liệu gốc theo ngày nằm tại PlatformDailyMetric (M02). Các trường cached_* dưới đây là bộ nhớ đệm dẫn xuất (derived cache) có ghi rõ nguồn và kỳ tổng hợp.
+
+model SeoKeyword {
+  id                       Int          @id @default(autoincrement())
+  keyword                  String       @unique
+  keywordNorm              String       @unique @map("keyword_norm")
+  // Các chỉ số dẫn xuất từ PlatformDailyMetric (M02) với kỳ thời gian và nguồn xác định rõ ràng
+  cachedSearchVolume       Int?         @map("cached_search_volume")
+  cachedAdsClicks          Int?         @map("cached_ads_clicks")
+  cachedOrganicClicks      Int?         @map("cached_organic_clicks")
+  cachedAvgPosition        Float?       @map("cached_avg_position")
+  cacheSourceAccountKey    String?      @map("cache_source_account_key")
+  cacheWindowStartDate     String?      @map("cache_window_start_date") // YYYY-MM-DD
+  cacheWindowEndDate       String?      @map("cache_window_end_date")   // YYYY-MM-DD
+  cacheRefreshedAt         DateTime?    @map("cache_refreshed_at")
+
+  trendDirection           String       @default("stable") @map("trend_direction") // 'rising' | 'stable' | 'declining'
+  recommendedPublishWindow String?      @map("recommended_publish_window") // UC05 Bước 2: Gợi ý thời điểm đăng bài tối ưu theo mùa vụ
+  updatedAt                DateTime     @updatedAt @map("updated_at")
+  articles                 SeoArticle[]
+
+  @@index([trendDirection])
+  @@map("seo_keywords")
+}
+
+model SeoArticle {
+  id                  Int                  @id @default(autoincrement())
+  version             Int                  @default(1) // Optimistic concurrency control
+  keywordId           Int?                 @map("keyword_id")
+  topic               String               // UC05 Bước 3: Chủ đề bài viết
+  title               String
+  slug                String?
+  metaDescription     String?              @map("meta_description")
+  aiSuggestedOutline  String?              @map("ai_suggested_outline") // UC05 Bước 4: Dàn ý chuẩn SEO do AI tạo
+  contentHtml         String               @map("content_html")
+  targetWebsite       String               @default("toantrung.com.vn") @map("target_website") // 'toantrung.com.vn' | 'bangled.vn' | 'manhinhled.net.vn'
+  status              String               @default("draft") // UC05: 'draft' (Nháp) | 'approved_scheduled' (Đã duyệt - chờ đăng) | 'published' (Đã đăng)
+  // Ràng buộc phiên bản được duyệt & đang hiện hành (UC05 Bước 6-8)
+  currentRevisionId   Int?                 @unique @map("current_revision_id")
+  approvedRevisionId  Int?                 @unique @map("approved_revision_id")
+  scheduledPublishAt  DateTime?            @map("scheduled_publish_at") // UC05 Bước 7: Lịch xuất bản
+  publishedAt         DateTime?            @map("published_at")
+  publishedUrl        String?              @map("published_url")
+  publishAttemptCount Int                  @default(0) @map("publish_attempt_count")
+  lastPublishError    String?              @map("last_publish_error") // UC05 E2: Lỗi kết nối Website khi tự động đăng
+
+  // Hiệu quả sau đăng dẫn xuất từ GA4 / Search Console (UC05 Bước 9 & 9a)
+  cachedOrganicClicks    Int?              @map("cached_organic_clicks")
+  cachedAvgPosition      Float?            @map("cached_avg_position")
+  cachedAvgTimeOnPageSec Float?            @map("cached_avg_time_on_page_sec")
+  metricsRefreshedAt     DateTime?         @map("metrics_refreshed_at")
+  needsOptimization      Boolean           @default(false) @map("needs_optimization") // UC05 9a: Cờ Cần tối ưu lại sau 30 ngày
+
+  createdByUserId     Int                  @map("created_by_user_id")
+  approvedByUserId    Int?                 @map("approved_by_user_id")
+  approvedAt          DateTime?            @map("approved_at")
+  createdAt           DateTime             @default(now()) @map("created_at")
+  updatedAt           DateTime             @updatedAt @map("updated_at")
+
+  keyword             SeoKeyword?          @relation(fields: [keywordId], references: [id], onDelete: SetNull)
+  createdBy           User                 @relation("SeoArticleCreatedBy", fields: [createdByUserId], references: [id])
+  approvedBy          User?                @relation("SeoArticleApprovedBy", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+  currentRevision     SeoArticleRevision?  @relation("SeoArticleCurrentRevision", fields: [currentRevisionId], references: [id], onDelete: SetNull)
+  approvedRevision    SeoArticleRevision?  @relation("SeoArticleApprovedRevision", fields: [approvedRevisionId], references: [id], onDelete: SetNull)
+  revisions           SeoArticleRevision[] @relation("SeoArticleRevisionHistory")
+  aiUsageLogs         AiUsageLog[]
+
+  @@unique([targetWebsite, slug], name: "uq_seo_article_website_slug")
+  @@index([status, scheduledPublishAt])
+  @@index([targetWebsite, status])
+  @@index([keywordId])
+  @@map("seo_articles")
+}
+
+model SeoArticleRevision {
+  id                  Int         @id @default(autoincrement())
+  articleId           Int         @map("article_id")
+  revisionNumber      Int         @map("revision_number") // Số phiên bản tăng dần trong phạm vi mỗi bài viết
+  originType          String      @default("human_edit") @map("origin_type") // 'ai_initial_draft' | 'human_edit'
+  title               String
+  metaDescription     String?     @map("meta_description")
+  contentHtml         String      @map("content_html")
+  changeNote          String?     @map("change_note") // UC05 Bước 6: Lịch sử chỉnh sửa bài viết
+  editedByUserId      Int         @map("edited_by_user_id")
+  createdAt           DateTime    @default(now()) @map("created_at")
+
+  article             SeoArticle  @relation("SeoArticleRevisionHistory", fields: [articleId], references: [id], onDelete: Cascade)
+  currentForArticle   SeoArticle? @relation("SeoArticleCurrentRevision")
+  approvedForArticle  SeoArticle? @relation("SeoArticleApprovedRevision")
+  editedBy            User        @relation("SeoRevisionEditedBy", fields: [editedByUserId], references: [id])
+
+  @@unique([articleId, revisionNumber], name: "uq_seo_article_revision_num")
+  @@index([articleId, createdAt])
+  @@map("seo_article_revisions")
+}

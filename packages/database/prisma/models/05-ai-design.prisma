@@ -1,0 +1,71 @@
+// Module 05: Hỗ trợ Thiết kế & Phối cảnh AI (DFD 6.0, Kho D6, BA ERD design_requests, UC06)
+// Owner: Nhóm 5 (05-ai-design)
+
+model DesignRequest {
+  id                  Int                  @id @default(autoincrement())
+  version             Int                  @default(1) // Optimistic concurrency control
+  // Cho phép null khi Designer tạo Banner độc lập (UC06 Luồng phụ 2a); bắt buộc gắn Lead ở tầng nghiệp vụ khi dựng phối cảnh 3D công trình (Q14)
+  leadId              Int?                 @map("lead_id")
+  requestedBySalesId  Int?                 @map("requested_by_sales_id")
+  assignedDesignerId  Int                  @map("assigned_designer_id")
+  requestType         String               @map("request_type") // BA ERD: '3d_perspective' | 'banner' | 'video_short'
+  ledCategory         String?              @map("led_category") // UC06 Bước 3: Kiểu dáng / loại màn hình LED hoặc bảng điện tử
+  screenDimensions    String?              @map("screen_dimensions") // BA ERD varchar(150): Kích thước thực tế
+  aspectRatio         String?              @map("aspect_ratio") // UC06: Tỉ lệ khung hình
+  installPositionJson String?              @map("install_position_json") // UC06 Bước 3: Tọa độ / vùng khoanh lắp đặt trên ảnh hiện trạng
+  sitePhotoUrl        String?              @map("site_photo_url") // Storage key riêng tư của ảnh hiện trạng mặt bằng gốc
+  prompt              String?              // UC06 Bước 3: Prompt mô tả yêu cầu ánh sáng, góc nhìn, bối cảnh (cấm chứa PII khách hàng)
+  designStatus        String               @default("pending") @map("design_status") // BA ERD: 'pending' | 'ai_drafting' | 'completed' | 'revision_needed'
+  // Hai trường ERD gốc trỏ tới storage key của bản nháp AI mới nhất và bản hoàn thiện đã duyệt
+  aiDraftImageUrl     String?              @map("ai_draft_image_url")
+  finalRenderUrl      String?              @map("final_render_url")
+  approvedVersionId   Int?                 @unique @map("approved_version_id") // Ràng buộc chính xác phiên bản ấn phẩm được duyệt bàn giao
+  // Tổng hợp thời gian/token/chi phí từ các lượt AiUsageLog thật (nullable khi chưa có hoặc nguồn không cung cấp)
+  processingTimeMs    Int?                 @map("processing_time_ms")
+  tokenCost           Int?                 @map("token_cost")
+  totalCostMicros     BigInt?              @map("total_cost_micros") // 1 đơn vị tiền tệ = 1,000,000 micros
+  costCurrency        String?              @map("cost_currency") // 'USD' | 'VND' theo đúng nguồn provider
+  notes               String?
+  createdAt           DateTime             @default(now()) @map("created_at")
+  completedAt         DateTime?            @map("completed_at")
+
+  lead                Lead?                @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  requestedBySales    User?                @relation("DesignRequestedBySales", fields: [requestedBySalesId], references: [id], onDelete: SetNull)
+  assignedDesigner    User                 @relation("DesignAssignedDesigner", fields: [assignedDesignerId], references: [id])
+  approvedVersion     DesignAssetVersion?  @relation("DesignRequestApprovedVersion", fields: [approvedVersionId], references: [id], onDelete: SetNull)
+  assetVersions       DesignAssetVersion[] @relation("DesignRequestVersionHistory")
+  aiUsageLogs         AiUsageLog[]
+
+  @@index([leadId])
+  @@index([assignedDesignerId])
+  @@index([requestedBySalesId])
+  @@index([assignedDesignerId, designStatus])
+  @@index([requestType, designStatus])
+  @@map("design_requests")
+}
+
+// Thư viện ấn phẩm & Lịch sử phiên bản nháp AI / bản hoàn thiện (UC06 Bước 6-7 & 10a-11a)
+model DesignAssetVersion {
+  id               Int            @id @default(autoincrement())
+  designRequestId  Int            @map("design_request_id")
+  versionNumber    Int            @map("version_number") // Số phiên bản tăng dần trong phạm vi từng DesignRequest
+  versionType      String         @map("version_type") // 'ai_draft' | 'final_render'
+  storageObjectKey String         @map("storage_object_key") // Khóa lưu trữ riêng tư (kiểm tra quyền trước khi tải)
+  mimeType         String         @default("image/png") @map("mime_type")
+  fileSizeBytes    Int?           @map("file_size_bytes")
+  promptUsed       String?        @map("prompt_used")
+  parametersJson   String?        @map("parameters_json")
+  aiUsageLogId     Int?           @unique @map("ai_usage_log_id") // Liên kết 1-1 với lượt gọi AI đã sinh ra bản nháp này
+  uploadedByUserId Int            @map("uploaded_by_user_id")
+  isApprovedFinal  Boolean        @default(false) @map("is_approved_final")
+  createdAt        DateTime       @default(now()) @map("created_at")
+
+  designRequest      DesignRequest  @relation("DesignRequestVersionHistory", fields: [designRequestId], references: [id], onDelete: Cascade)
+  approvedForRequest DesignRequest? @relation("DesignRequestApprovedVersion")
+  aiUsageLog         AiUsageLog?    @relation(fields: [aiUsageLogId], references: [id], onDelete: SetNull)
+  uploadedBy         User           @relation("DesignAssetUploadedBy", fields: [uploadedByUserId], references: [id])
+
+  @@unique([designRequestId, versionNumber], name: "uq_design_request_version_num")
+  @@index([designRequestId, versionType])
+  @@map("design_asset_versions")
+}

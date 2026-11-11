@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "allowJs": true,
+    "paths": {
+      "@api/*": ["./src/*"],
+      "@toantrung/contracts": ["../../packages/contracts/src/common/index.ts"],
+      "@toantrung/database": ["../../packages/database/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.js"]
+}
