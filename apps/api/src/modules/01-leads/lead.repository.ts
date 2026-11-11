@@ -1,230 +1,356 @@
-import { PrismaClient, Prisma } from "@prisma/client";
 
-export const prisma = new PrismaClient();
+import { Prisma, prisma } from "@toantrung/database";
+import type {
+  PreparedLead,
+  PreparedLeadUpdate,
+} from "./lead.service";
 
-export async function createLead(
-  data: Prisma.LeadUncheckedCreateInput,
-  actorUserId: number
+export interface CreateLeadRepositoryOptions {
+  createdByUserId: number;
+}
+
+function formatLeadDate(date: Date): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Ho_Chi_Minh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const get = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? "";
+
+  return `${get("year")}${get("month")}${get("day")}`;
+}
+
+async function getNextLeadNumber(): Promise<number> {
+  const existing = await prisma.lead.findMany({
+    select: { leadCode: true },
+  });
+
+  let highest = 0;
+
+  for (const lead of existing) {
+    const match = /^TT-\d{8}-(\d+)$/.exec(lead.leadCode);
+
+    if (match) {
+      const number = Number(match[1]);
+
+      if (Number.isSafeInteger(number)) {
+        highest = Math.max(highest, number);
+      }
+    }
+  }
+
+  return highest + 1;
+}
+
+function isLeadCodeConflict(error: unknown): boolean {
+  if (
+    !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+    error.code !== "P2002"
+  ) {
+    return false;
+  }
+
+  const target = error.meta?.target;
+
+  if (Array.isArray(target)) {
+    return target.some((field) =>
+      String(field).includes("lead_code")
+    );
+  }
+
+  return String(target ?? "").includes("lead_code");
+}
+
+export async function createLeadRecord(
+  input: PreparedLead,
+  options: CreateLeadRepositoryOptions
 ) {
-  return prisma.$transaction(async (tx) => {
-    const lead = await tx.lead.create({
-      data,
-    });
+  const userId = options.createdByUserId;
 
-    await tx.leadHistory.create({
-      data: {
-        leadId: lead.id,
-        actorUserId,
-        action: "CREATE",
-        newValue: JSON.stringify({
-          leadId: lead.id,
-          phone: lead.phone,
-          status: lead.status,
-        }),
-      },
-    });
+  if (!Number.isSafeInteger(userId) || userId <= 0) {
+    throw new Error("createdByUserId không hợp lệ");
+  }
 
-    return lead;
-  });
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const nextNumber = await getNextLeadNumber();
+
+    const leadCode =
+      `TT-${formatLeadDate(new Date())}-${String(nextNumber).padStart(4, "0")}`;
+
+    try {
+      return await prisma.$transaction(async (tx) => {
+        const lead = await tx.lead.create({
+          data: {
+            leadCode,
+            phone: input.phone,
+            isPhoneUnstandardized:
+              input.isPhoneUnstandardized,
+            contactChannel: input.contactChannel,
+            contactName: input.contactName,
+            email: input.email,
+            companyName: input.companyName,
+            projectName: input.projectName,
+            installationAddress:
+              input.installationAddress,
+            contactedAt: input.contactedAt,
+            createdByUserId: userId,
+            createdByActorType: "user",
+            createdByActorRef: `user:${userId}`,
+            assignedSalesId: userId,
+          },
+        });
+
+        if (input.productId !== null) {
+          await tx.leadProduct.create({
+            data: {
+              leadId: lead.id,
+              productId: input.productId,
+            },
+          });
+        }
+
+        await tx.leadActivity.create({
+          data: {
+            leadId: lead.id,
+            actionType: "create_lead",
+            newStatus: lead.pipelineStatus,
+            actionById: userId,
+            actorType: "user",
+            actorRef: `user:${userId}`,
+            note: "Tạo hồ sơ Lead thủ công",
+          },
+        });
+
+        return lead;
+      });
+    } catch (error) {
+      if (isLeadCodeConflict(error) && attempt < 4) {
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  throw new Error("Không thể cấp mã Lead duy nhất");
 }
 
-export async function getLeadById(leadId: number) {
-  return prisma.lead.findUnique({
-    where: {
-      id: leadId,
-    },
-    include: {
-      source: true,
-      product: true,
-      assignedTo: true,
-      receivedBy: true,
-      histories: {
-        orderBy: {
-          createdAt: "desc",
-        },
-      },
-    },
-  });
-}
-
-export type LeadFilters = {
-  search?: string;
-  status?: string;
-  sourceId?: number;
-  assignedToId?: number;
-  fromDate?: Date;
-  toDate?: Date;
+export interface ListLeadsOptions {
+  userId: number;
+  canViewAll: boolean;
   page?: number;
   pageSize?: number;
+
+  search?: string;
+  status?: string;
+  contactChannel?: string;
+  assignedSalesId?: number;
+  dateFrom?: Date;
+  dateTo?: Date;
+}
+export async function listLeadRecords(options: ListLeadsOptions) {
+  const {
+  userId,
+  canViewAll,
+  page = 1,
+  pageSize = 10,
+  search,
+  status,
+  contactChannel,
+  assignedSalesId,
+  dateFrom,
+  dateTo,
+} = options;
+
+  if (!Number.isSafeInteger(userId) || userId <= 0) {
+    throw new Error("userId không hợp lệ");
+  }
+
+  if (!Number.isSafeInteger(page) || page < 1) {
+    throw new Error("page không hợp lệ");
+  }
+
+  if (
+    !Number.isSafeInteger(pageSize) ||
+    pageSize < 1 ||
+    pageSize > 100
+  ) {
+    throw new Error("pageSize không hợp lệ");
+  }
+
+  const where: Prisma.LeadWhereInput = {
+  AND: [
+    // Giới hạn phạm vi Lead theo quyền
+    canViewAll
+      ? {}
+      : { assignedSalesId: userId },
+
+    // Tìm kiếm
+    ...(search?.trim()
+      ? [{         
+            OR: [
+          { leadCode: { contains: search.trim() } },
+          { contactName: { contains: search.trim() } },
+          { phone: { contains: search.trim() } },
+          { companyName: { contains: search.trim() } },
+          { projectName: { contains: search.trim() } },
+          ],
+        }]
+      : []),
+
+    // Lọc trạng thái
+    ...(status
+      ? [{ pipelineStatus: status }]
+      : []),
+
+    // Lọc kênh liên hệ
+    ...(contactChannel
+      ? [{ contactChannel }]
+      : []),
+
+    // Lọc Sales phụ trách
+    ...(assignedSalesId !== undefined
+      ? [{ assignedSalesId }]
+      : []),
+
+    // Lọc thời gian
+    ...(dateFrom || dateTo
+      ? [{
+          createdAt: {
+            ...(dateFrom ? { gte: dateFrom } : {}),
+            ...(dateTo ? { lte: dateTo } : {}),
+          },
+        }]
+      : []),
+  ],
 };
 
-export async function listLeads(filters: LeadFilters = {}) {
-  const page = Math.max(1, filters.page ?? 1);
-  const pageSize = Math.min(100, Math.max(1, filters.pageSize ?? 10));
-
-  const where: Prisma.LeadWhereInput = {};
-
-  if (filters.search?.trim()) {
-    const search = filters.search.trim();
-
-    where.OR = [
-      { phone: { contains: search } },
-      { companyName: { contains: search } },
-      { projectName: { contains: search } },
-      { installationAddress: { contains: search } },
-    ];
-  }
-
-  if (filters.status) {
-    where.status = filters.status;
-  }
-
-  if (filters.sourceId !== undefined) {
-    where.sourceId = filters.sourceId;
-  }
-
-  if (filters.assignedToId !== undefined) {
-    where.assignedToId = filters.assignedToId;
-  }
-
-  if (filters.fromDate || filters.toDate) {
-    where.createdAt = {
-      ...(filters.fromDate ? { gte: filters.fromDate } : {}),
-      ...(filters.toDate ? { lte: filters.toDate } : {}),
-    };
-  }
-
-  const [items, total] = await prisma.$transaction([
+  const [total, leads] = await prisma.$transaction([
+    prisma.lead.count({ where }),
     prisma.lead.findMany({
       where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
       include: {
-        source: true,
-        product: true,
-        assignedTo: {
-          select: {
-            id: true,
+        leadProducts: {
+          include: {
+            product: true,
           },
         },
       },
-      orderBy: {
-        createdAt: "desc",
-      },
-      skip: (page - 1) * pageSize,
-      take: pageSize,
     }),
-    prisma.lead.count({ where }),
   ]);
 
   return {
-    items,
-    total,
-    page,
-    pageSize,
-    totalPages: Math.ceil(total / pageSize),
+    leads,
+    pagination: {
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+    },
   };
 }
 
-type UpdateLeadData = {
-  phone?: string;
-  companyName?: string | null;
-  projectName?: string | null;
-  installationAddress?: string | null;
-  productId?: number | null;
-};
 
-export async function updateLead(
-  leadId: number,
-  data: UpdateLeadData,
-  actorUserId: number
+export interface UpdateLeadRepositoryOptions {
+  leadId: number;
+  updatedByUserId: number;
+  canUpdateAll: boolean;
+}
+
+export async function updateLeadRecord(
+  input: PreparedLeadUpdate,
+  options: UpdateLeadRepositoryOptions
 ) {
+  const { leadId, updatedByUserId, canUpdateAll } = options;
+
+  if (!Number.isSafeInteger(leadId) || leadId <= 0) {
+    throw new Error("leadId không hợp lệ");
+  }
+
+  if (
+    !Number.isSafeInteger(updatedByUserId) ||
+    updatedByUserId <= 0
+  ) {
+    throw new Error("updatedByUserId không hợp lệ");
+  }
+
   return prisma.$transaction(async (tx) => {
-    // 1. Lấy thông tin Lead hiện tại
-    const oldLead = await tx.lead.findUnique({
-      where: { id: leadId },
+    const existing = await tx.lead.findFirst({
+      where: {
+        id: leadId,
+        ...(canUpdateAll
+          ? {}
+          : { assignedSalesId: updatedByUserId }),
+      },
+      include: {
+        leadProducts: true,
+      },
     });
 
-    if (!oldLead) {
-      throw new Error("Không tìm thấy Lead");
+    if (!existing) {
+      return null;
     }
 
-    // 2. Chuẩn bị dữ liệu cập nhật
-    const updateData: UpdateLeadData & {
-      normalizedPhone?: string | null;
-      phoneUnverified?: boolean;
-    } = { ...data };
+    const {
+      productId,
+      ...leadFields
+    } = input;
 
-    // 3. Chuẩn hóa số điện thoại khi thay đổi
-    if (data.phone !== undefined) {
-      const rawPhone = data.phone.trim();
-      const digits = rawPhone.replace(/\D/g, "");
+    const updated = await tx.lead.update({
+      where: { id: leadId },
+      data: {
+        ...leadFields,
+        version: { increment: 1 },
+      },
+    });
 
-      let normalizedPhone: string | null = null;
+    if (productId !== undefined) {
+      await tx.leadProduct.deleteMany({
+        where: { leadId },
+      });
 
-      if (/^0\d{9}$/.test(digits)) {
-        normalizedPhone = digits;
-      } else if (/^84\d{9}$/.test(digits)) {
-        normalizedPhone = "0" + digits.slice(2);
-      }
-
-      updateData.phone = normalizedPhone ?? rawPhone;
-      updateData.normalizedPhone = normalizedPhone;
-      updateData.phoneUnverified = normalizedPhone === null;
-    }
-
-    // 4. Các trường cần theo dõi lịch sử
-    const trackedFields = [
-      "phone",
-      "companyName",
-      "projectName",
-      "installationAddress",
-      "productId",
-    ] as const;
-
-    const changes: {
-      fieldName: string;
-      oldValue: string | null;
-      newValue: string | null;
-    }[] = [];
-
-    // 5. So sánh giá trị cũ và mới
-    for (const field of trackedFields) {
-      if (data[field] === undefined) continue;
-
-      const oldValue = oldLead[field];
-      const newValue = updateData[field];
-
-      if (oldValue !== newValue) {
-        changes.push({
-          fieldName: field,
-          oldValue: oldValue == null ? null : String(oldValue),
-          newValue: newValue == null ? null : String(newValue),
+      if (productId !== null) {
+        await tx.leadProduct.create({
+          data: {
+            leadId,
+            productId,
+          },
         });
       }
     }
 
-    // 6. Không cập nhật nếu không có thay đổi
-    if (changes.length === 0) {
-      return oldLead;
-    }
-
-    // 7. Cập nhật Lead
-    const updatedLead = await tx.lead.update({
-      where: { id: leadId },
-      data: updateData,
-    });
-
-    // 8. Ghi lịch sử từng trường thay đổi
-    await tx.leadHistory.createMany({
-      data: changes.map((change) => ({
+    await tx.leadActivity.create({
+      data: {
         leadId,
-        actorUserId,
-        action: "UPDATE",
-        fieldName: change.fieldName,
-        oldValue: change.oldValue,
-        newValue: change.newValue,
-      })),
+        actionType: "update_lead",
+        actionById: updatedByUserId,
+        actorType: "user",
+        actorRef: `user:${updatedByUserId}`,
+        note: "Cập nhật thông tin hồ sơ Lead",
+        oldValueJson: JSON.stringify({
+          phone: existing.phone,
+          contactName: existing.contactName,
+          email: existing.email,
+          companyName: existing.companyName,
+          projectName: existing.projectName,
+          installationAddress: existing.installationAddress,
+          productIds: existing.leadProducts.map(
+            (item) => item.productId
+          ),
+        }),
+        newValueJson: JSON.stringify({
+          ...leadFields,
+          productId,
+        }),
+      },
     });
 
-    return updatedLead;
+    return updated;
   });
 }
