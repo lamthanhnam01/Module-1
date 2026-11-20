@@ -1,4 +1,4 @@
-
+import { buildNormalizedLookupKey } from "./lead-lookup-key";
 import { normalizePhone } from "./phone";
 import {
   validateCreateLead,
@@ -11,6 +11,8 @@ export interface PreparedLead {
   phone: string;
   isPhoneUnstandardized: boolean;
   contactChannel: string;
+
+  normalizedLookupKey: string | null;
 
   contactName: string | null;
   email: string | null;
@@ -50,6 +52,11 @@ export function prepareCreateLead(
 
     contactChannel: input.contactChannel,
 
+    normalizedLookupKey: buildNormalizedLookupKey(
+    input.companyName,
+   input.projectName
+  ),
+
     contactName: cleanOptionalText(input.contactName),
     email: cleanOptionalText(input.email),
     companyName: cleanOptionalText(input.companyName),
@@ -76,6 +83,7 @@ export interface PreparedLeadUpdate {
   projectName?: string | null;
   installationAddress?: string | null;
   productId?: number | null;
+  normalizedLookupKey?: string | null;
 }
 
 export function prepareUpdateLead(
