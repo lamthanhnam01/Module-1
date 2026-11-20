@@ -126,7 +126,6 @@ export async function POST(req: Request) {
   }
 }
 
-
 export async function GET(req: Request) {
   const auth = await requireAuthenticatedSession(req, {
     requireCsrf: false,

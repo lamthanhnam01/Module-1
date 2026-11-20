@@ -1,4 +1,4 @@
-
+import { buildNormalizedLookupKey } from "./lead-lookup-key";
 import { Prisma, prisma } from "@toantrung/database";
 import type {
   PreparedLead,
@@ -93,8 +93,9 @@ export async function createLeadRecord(
             email: input.email,
             companyName: input.companyName,
             projectName: input.projectName,
+            normalizedLookupKey: input.normalizedLookupKey,
             installationAddress:
-              input.installationAddress,
+            input.installationAddress,
             contactedAt: input.contactedAt,
             createdByUserId: userId,
             createdByActorType: "user",
@@ -297,17 +298,30 @@ export async function updateLeadRecord(
       return null;
     }
 
-    const {
-      productId,
-      ...leadFields
-    } = input;
+   const { productId, ...leadFields } = input;
 
-    const updated = await tx.lead.update({
+   const companyName =
+    input.companyName !== undefined
+    ? input.companyName
+    : existing.companyName;
+
+   const projectName =
+    input.projectName !== undefined
+    ? input.projectName
+    : existing.projectName;
+
+    const normalizedLookupKey = buildNormalizedLookupKey(
+    companyName,
+    projectName
+);
+
+const updated = await tx.lead.update({
       where: { id: leadId },
       data: {
-        ...leadFields,
-        version: { increment: 1 },
-      },
+      ...leadFields,
+      normalizedLookupKey,
+      version: { increment: 1 },
+    },
     });
 
     if (productId !== undefined) {
