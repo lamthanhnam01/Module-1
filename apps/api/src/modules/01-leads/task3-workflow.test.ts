@@ -25,9 +25,10 @@ import type { Task3LeadAuthorizer } from "./task3-policy.ts";
 const now = new Date("2026-11-07T10:00:00.000Z");
 
 const lead: Task3Lead = {
-  id: "L01",
+  id: 1,
+  version: 1,
   status: "quoting",
-  assignedTo: "sales-01",
+  assignedTo: 101,
   receivedBy: null,
   receivedAt: null,
   quoteSentAt: null,
@@ -35,10 +36,13 @@ const lead: Task3Lead = {
   quoteValue: null,
   closedValue: null,
   closedAt: null,
+  statusChangedAt: now,
+  lostReason: null,
+  reopenCount: 0,
 };
 
 const sender: Task3TransferCandidate = {
-  id: "sales-01",
+  id: 101,
   isActive: true,
   isOnline: true,
   canReceiveLead: true,
@@ -46,7 +50,7 @@ const sender: Task3TransferCandidate = {
 };
 
 const receiver: Task3TransferCandidate = {
-  id: "sales-02",
+  id: 102,
   isActive: true,
   isOnline: true,
   canReceiveLead: true,
@@ -99,15 +103,19 @@ function createRepository(options?: {
           }
           return null;
         },
-        async hasActiveFailureReason(reasonId) {
+        async hasActiveFailureReason(lostReason) {
           return (
-            reasonId === "reason-01" &&
+            lostReason === "Khách từ chối báo giá" &&
             options?.validFailureReason !== false
           );
         },
-        async updateLead(leadId, changes) {
+        async updateLead(leadId, expectedVersion, changes) {
           assert.equal(leadId, workingLead.id);
+          if (workingLead.version !== expectedVersion) {
+            return null;
+          }
           Object.assign(workingLead, changes);
+          workingLead.version += 1;
           workingUpdateCount += 1;
           return { ...workingLead };
         },
@@ -143,13 +151,13 @@ test("Cho phép Pipeline theo thứ tự, lùi báo giá và thất bại từ t
     true
   );
   assert.equal(
-    validateTask3PipelineTransition("new_lead", "lost", "reason-01")
+    validateTask3PipelineTransition("new_lead", "lost", "Khách từ chối")
       .success,
     true
   );
   assert.equal(
-    validateTask3PipelineTransition("won", "lost", "reason-01").success,
-    true
+    validateTask3PipelineTransition("won", "lost", "Không phù hợp").success,
+    false
   );
   assert.equal(
     validateTask3PipelineTransition("quoting", "won").success,
@@ -178,7 +186,7 @@ test("Chuyển trạng thái sai trả E7; thất bại thiếu lý do bị từ
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       nextStatus: "won",
       now,
     },
@@ -192,13 +200,58 @@ test("Chuyển trạng thái sai trả E7; thất bại thiếu lý do bị từ
   assert.equal(state.updateCount, 0);
 });
 
+test("Không cho chuyển Chốt thành Thất bại", async () => {
+  const { repository, state } = createRepository({
+    lead: { ...lead, status: "won", closedAt: now },
+  });
+  const result = await transitionTask3Lead(
+    repository,
+    {
+      leadId: lead.id,
+      actorId: 101,
+      nextStatus: "lost",
+      lostReason: "Khách hủy",
+      now,
+    },
+    authorizeAssignedLead,
+  );
+
+  assert.deepEqual(result, {
+    success: false,
+    error: "Chuyển trạng thái không hợp lệ (E7)",
+  });
+  assert.equal(state.lead.status, "won");
+  assert.equal(state.updateCount, 0);
+});
+
+test("Version cũ bị từ chối trước khi ghi trạng thái hoặc lịch sử", async () => {
+  const { repository, state } = createRepository();
+  const result = await transitionTask3Lead(
+    repository,
+    {
+      leadId: lead.id,
+      actorId: 101,
+      expectedVersion: lead.version + 1,
+      nextStatus: "quote_sent",
+      now,
+    },
+    authorizeAssignedLead,
+  );
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /được cập nhật bởi thao tác khác/);
+  assert.equal(state.lead.status, "quoting");
+  assert.equal(state.lead.version, 1);
+  assert.equal(state.activities.length, 0);
+});
+
 test("TC05: Pipeline, báo giá và lịch sử được ghi cùng transaction", async () => {
   const { repository, state } = createRepository();
   const result = await transitionTask3Lead(
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       nextStatus: "quote_sent",
       quoteValue: 1250000,
       now,
@@ -212,11 +265,12 @@ test("TC05: Pipeline, báo giá và lịch sử được ghi cùng transaction",
   assert.equal(state.lead.quoteValue, 1250000);
   assert.equal(state.lead.quoteSentAt, now);
   assert.equal(state.activities.length, 2);
+  assert.equal(state.activities[0].action, "STATUS_CHANGED");
   assert.equal(state.activities[1].oldValue, null);
   assert.equal(state.activities[1].newValue, "1250000");
 });
 
-test("TC07: Chỉ chấp nhận lý do thất bại đang có trong danh mục", async () => {
+test("TC07: Thất bại chỉ lưu lý do có trong danh mục", async () => {
   const { repository, state } = createRepository({
     validFailureReason: false,
   });
@@ -224,9 +278,9 @@ test("TC07: Chỉ chấp nhận lý do thất bại đang có trong danh mục",
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       nextStatus: "lost",
-      failureReasonId: "reason-01",
+      lostReason: "Khách từ chối báo giá",
       now,
     },
     authorizeAssignedLead
@@ -241,6 +295,26 @@ test("TC07: Chỉ chấp nhận lý do thất bại đang có trong danh mục",
   assert.equal(state.activities.length, 0);
 });
 
+test("TC07: Lý do thất bại đang hoạt động được lưu cùng lịch sử", async () => {
+  const { repository, state } = createRepository();
+  const result = await transitionTask3Lead(
+    repository,
+    {
+      leadId: lead.id,
+      actorId: 101,
+      nextStatus: "lost",
+      lostReason: "Khách từ chối báo giá",
+      now,
+    },
+    authorizeAssignedLead,
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(state.lead.status, "lost");
+  assert.equal(state.lead.lostReason, "Khách từ chối báo giá");
+  assert.equal(state.activities[0].action, "STATUS_CHANGED");
+});
+
 test("Đóng thành công lưu thời điểm đóng và giá trị chốt", async () => {
   const { repository, state } = createRepository({
     lead: { ...lead, status: "quote_sent" },
@@ -249,7 +323,7 @@ test("Đóng thành công lưu thời điểm đóng và giá trị chốt", asy
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       nextStatus: "won",
       closedValue: 1000000,
       now,
@@ -269,7 +343,7 @@ test("Nhập giá trị báo giá và giá trị chốt độc lập, ghi lịch
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       quoteValue: 900000,
       closedValue: 0,
       now,
@@ -295,7 +369,7 @@ test("Lùi Đã gửi báo giá về Đang soạn báo giá và từ chối giá
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       nextStatus: "quoting",
       now,
     },
@@ -305,7 +379,7 @@ test("Lùi Đã gửi báo giá về Đang soạn báo giá và từ chối giá
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       quoteValue: -1,
       now,
     },
@@ -314,7 +388,7 @@ test("Lùi Đã gửi báo giá về Đang soạn báo giá và từ chối giá
 
   assert.equal(backward.success, true);
   assert.equal(state.lead.status, "quoting");
-  assert.equal(state.lead.quoteSentAt, null);
+  assert.equal(state.lead.quoteSentAt, now);
   assert.equal(negative.success, false);
 });
 
@@ -324,7 +398,7 @@ test("Từ chối giá trị không hợp lệ trước khi ghi", async () => {
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       nextStatus: "quote_sent",
       quoteValue: Number.NaN,
       now,
@@ -343,7 +417,7 @@ test("Kiểm tra quyền máy chủ trước khi cập nhật Pipeline", async (
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-02",
+      actorId: 102,
       nextStatus: "quote_sent",
       now,
     },
@@ -367,7 +441,7 @@ test("Lỗi ghi lịch sử được truyền ra để DB transaction rollback",
   await assert.rejects(
     transitionTask3Lead(repository, {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       nextStatus: "quote_sent",
       now,
     }, authorizeAssignedLead),
@@ -388,7 +462,7 @@ test("TC12: Mở lại Lead trong cửa sổ cấu hình, bắt buộc có lý d
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       nextStatus: "quoting",
       reason: "Khách hàng quay lại",
       reopenWindowMs: 7 * 24 * 60 * 60 * 1000,
@@ -403,14 +477,16 @@ test("TC12: Mở lại Lead trong cửa sổ cấu hình, bắt buộc có lý d
   assert.equal(state.activities[0].oldValue, "lost");
   assert.equal(state.activities[0].newValue, "quoting");
   assert.equal(state.activities[0].reason, "Khách hàng quay lại");
+  assert.equal(state.activities[0].action, "LEAD_REOPENED");
 });
 
-test("Mở lại ở trạng thái đã gửi báo giá tạo mốc theo dõi mới", async () => {
+test("Mở lại giữ mốc gửi báo giá đầu tiên và tăng bộ đếm", async () => {
+  const firstQuoteSentAt = new Date("2026-10-30T10:00:00.000Z");
   const { repository, state } = createRepository({
     lead: {
       ...lead,
       status: "won",
-      quoteSentAt: new Date("2026-10-30T10:00:00.000Z"),
+      quoteSentAt: firstQuoteSentAt,
       respondedAt: now,
       closedAt: new Date("2026-11-06T10:00:00.000Z"),
     },
@@ -419,7 +495,7 @@ test("Mở lại ở trạng thái đã gửi báo giá tạo mốc theo dõi m�
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       nextStatus: "quote_sent",
       reason: "Khách yêu cầu gửi lại báo giá",
       reopenWindowMs: 2 * 24 * 60 * 60 * 1000,
@@ -429,8 +505,9 @@ test("Mở lại ở trạng thái đã gửi báo giá tạo mốc theo dõi m�
   );
 
   assert.equal(result.success, true);
-  assert.equal(state.lead.quoteSentAt, now);
+  assert.equal(state.lead.quoteSentAt, firstQuoteSentAt);
   assert.equal(state.lead.respondedAt, null);
+  assert.equal(state.lead.reopenCount, 1);
 });
 
 test("Từ chối mở lại khi quá hạn, thiếu lý do hoặc chọn trạng thái đóng", async () => {
@@ -444,7 +521,7 @@ test("Từ chối mở lại khi quá hạn, thiếu lý do hoặc chọn trạn
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       nextStatus: "new_lead",
       reason: "Mở lại",
       reopenWindowMs: 1000,
@@ -456,7 +533,7 @@ test("Từ chối mở lại khi quá hạn, thiếu lý do hoặc chọn trạn
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       nextStatus: "quoting",
       reason: " ",
       reopenWindowMs: 7 * 24 * 60 * 60 * 1000,
@@ -468,7 +545,7 @@ test("Từ chối mở lại khi quá hạn, thiếu lý do hoặc chọn trạn
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       nextStatus: "won",
       reason: "Mở lại",
       reopenWindowMs: 7 * 24 * 60 * 60 * 1000,
@@ -488,17 +565,17 @@ test("TC06: Chuyển Lead giữ Pipeline và ghi người nhận/lý do", async 
   const { repository, state } = createRepository();
   const result = await transferTask3Lead(repository, {
     leadId: lead.id,
-    actorId: "sales-01",
-    receiverId: "sales-02",
+    actorId: 101,
+    receiverId: 102,
     reason: "NOT_SPECIALTY",
     now,
   }, authorizeAssignedLead);
 
   assert.equal(result.success, true);
-  assert.equal(state.lead.assignedTo, "sales-02");
+  assert.equal(state.lead.assignedTo, 102);
   assert.equal(state.lead.status, "quoting");
-  assert.equal(state.activities[0].fromUserId, "sales-01");
-  assert.equal(state.activities[0].toUserId, "sales-02");
+  assert.equal(state.activities[0].fromUserId, 101);
+  assert.equal(state.activities[0].toUserId, 102);
   assert.equal(state.activities[0].reason, "NOT_SPECIALTY");
   assert.equal(state.activities[0].note, null);
 });
@@ -510,8 +587,8 @@ test("TC06: Kiểm tra người nhận và tải việc trong transaction lúc x
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
-      receiverId: "sales-02",
+      actorId: 101,
+      receiverId: 102,
       reason: "BUSY",
       note: "Bàn giao theo yêu cầu khách",
       now,
@@ -525,7 +602,7 @@ test("TC06: Kiểm tra người nhận và tải việc trong transaction lúc x
 
   assert.equal(result.success, true);
   assert.equal(capacityChecked, true);
-  assert.equal(state.lead.assignedTo, "sales-02");
+  assert.equal(state.lead.assignedTo, 102);
   assert.equal(
     state.activities[0].note,
     "Bàn giao theo yêu cầu khách"
@@ -538,8 +615,8 @@ test("Người quản lý được ủy quyền chuyển Lead, vẫn ghi Sales �
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-manager",
-      receiverId: "sales-02",
+      actorId: 104,
+      receiverId: 102,
       reason: "NOT_SPECIALTY",
       now,
     },
@@ -547,9 +624,9 @@ test("Người quản lý được ủy quyền chuyển Lead, vẫn ghi Sales �
   );
 
   assert.equal(result.success, true);
-  assert.equal(state.activities[0].actorId, "sales-manager");
-  assert.equal(state.activities[0].fromUserId, "sales-01");
-  assert.equal(state.activities[0].toUserId, "sales-02");
+  assert.equal(state.activities[0].actorId, 104);
+  assert.equal(state.activities[0].fromUserId, 101);
+  assert.equal(state.activities[0].toUserId, 102);
 });
 
 test("Từ chối người nhận không hoạt động, offline hoặc không đủ tải việc", async () => {
@@ -564,8 +641,8 @@ test("Từ chối người nhận không hoạt động, offline hoặc không �
     inactive.repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
-      receiverId: "sales-02",
+      actorId: 101,
+      receiverId: 102,
       reason: "NOT_SPECIALTY",
       now,
     },
@@ -573,8 +650,8 @@ test("Từ chối người nhận không hoạt động, offline hoặc không �
   );
   const offlineResult = await transferTask3Lead(offline.repository, {
     leadId: lead.id,
-    actorId: "sales-01",
-    receiverId: "sales-02",
+    actorId: 101,
+    receiverId: 102,
     reason: "NOT_SPECIALTY",
     now,
   }, authorizeAssignedLead);
@@ -582,8 +659,8 @@ test("Từ chối người nhận không hoạt động, offline hoặc không �
     insufficientCapacity.repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
-      receiverId: "sales-02",
+      actorId: 101,
+      receiverId: 102,
       reason: "BUSY",
       now,
     },
@@ -594,7 +671,7 @@ test("Từ chối người nhận không hoạt động, offline hoặc không �
   assert.equal(inactiveResult.success, false);
   assert.equal(offlineResult.success, false);
   assert.equal(capacityResult.success, false);
-  assert.equal(inactive.state.lead.assignedTo, "sales-01");
+  assert.equal(inactive.state.lead.assignedTo, 101);
   assert.equal(offline.state.activities.length, 0);
   assert.equal(insufficientCapacity.state.activities.length, 0);
 });
@@ -603,15 +680,15 @@ test("Lý do khác phải có nội dung; không chuyển Lead cho chính mình"
   const { repository } = createRepository();
   const missingNote = await transferTask3Lead(repository, {
     leadId: lead.id,
-    actorId: "sales-01",
-    receiverId: "sales-02",
+    actorId: 101,
+    receiverId: 102,
     reason: "OTHER",
     now,
   }, authorizeAssignedLead);
   const selfTransfer = await transferTask3Lead(repository, {
     leadId: lead.id,
-    actorId: "sales-01",
-    receiverId: "sales-01",
+    actorId: 101,
+    receiverId: 101,
     reason: "NOT_SPECIALTY",
     now,
   }, authorizeAssignedLead);
@@ -626,7 +703,7 @@ test("Xác nhận tiếp nhận ghi người/thời điểm, không đổi trạ
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-01",
+      actorId: 101,
       now,
     },
     authorizeAssignedLead
@@ -634,7 +711,7 @@ test("Xác nhận tiếp nhận ghi người/thời điểm, không đổi trạ
 
   assert.equal(result.success, true);
   assert.equal(state.lead.status, "quoting");
-  assert.equal(state.lead.receivedBy, "sales-01");
+  assert.equal(state.lead.receivedBy, 101);
   assert.equal(state.lead.receivedAt, now);
   assert.equal(state.activities[0].action, "LEAD_RECEIVED");
 });
@@ -645,7 +722,7 @@ test("Từ chối xác nhận tiếp nhận khi không có quyền máy chủ", 
     repository,
     {
       leadId: lead.id,
-      actorId: "sales-02",
+      actorId: 102,
       now,
     },
     denyLead
@@ -662,25 +739,25 @@ test("Từ chối xác nhận tiếp nhận khi không có quyền máy chủ", 
 test("TC11: Danh sách báo giá chờ phản hồi loại đúng Lead và sắp xếp cũ trước", () => {
   const pending = getTask3PendingQuoteFollowups([
     {
-      id: "L02",
+      id: 2,
       status: "quote_sent",
       quoteSentAt: new Date("2026-11-02T10:00:00.000Z"),
       respondedAt: null,
     },
     {
-      id: "L01",
+      id: 1,
       status: "quote_sent",
       quoteSentAt: new Date("2026-11-01T10:00:00.000Z"),
       respondedAt: null,
     },
     {
-      id: "L03",
+      id: 3,
       status: "quote_sent",
       quoteSentAt: new Date("2026-11-01T10:00:00.000Z"),
       respondedAt: now,
     },
     {
-      id: "L04",
+      id: 4,
       status: "quoting",
       quoteSentAt: null,
       respondedAt: null,
@@ -689,16 +766,16 @@ test("TC11: Danh sách báo giá chờ phản hồi loại đúng Lead và sắp
 
   assert.deepEqual(
     pending.map(({ id }) => id),
-    ["L01", "L02"]
+    [1, 2]
   );
 });
 
 test("Lịch sử Lead lọc đúng Lead và sắp xếp mới nhất trước", () => {
   const activities: Task3Activity[] = [
     {
-      leadId: "L01",
+      leadId: 1,
       action: "STATUS_CHANGED",
-      actorId: "sales-01",
+      actorId: 101,
       createdAt: new Date("2026-11-01T10:00:00.000Z"),
       field: "status",
       oldValue: "new_lead",
@@ -709,22 +786,22 @@ test("Lịch sử Lead lọc đúng Lead và sắp xếp mới nhất trước",
       toUserId: null,
     },
     {
-      leadId: "L01",
+      leadId: 1,
       action: "LEAD_TRANSFERRED",
-      actorId: "sales-01",
+      actorId: 101,
       createdAt: new Date("2026-11-02T10:00:00.000Z"),
       field: "assignedTo",
-      oldValue: "sales-01",
-      newValue: "sales-02",
+      oldValue: "101",
+      newValue: "102",
       reason: "BUSY",
       note: null,
-      fromUserId: "sales-01",
-      toUserId: "sales-02",
+      fromUserId: 101,
+      toUserId: 102,
     },
     {
-      leadId: "L02",
+      leadId: 2,
       action: "STATUS_CHANGED",
-      actorId: "sales-03",
+      actorId: 103,
       createdAt: now,
       field: "status",
       oldValue: "new_lead",
@@ -736,7 +813,7 @@ test("Lịch sử Lead lọc đúng Lead và sắp xếp mới nhất trước",
     },
   ];
 
-  const result = getTask3LeadHistory(activities, "L01");
+  const result = getTask3LeadHistory(activities, 1);
   assert.equal(result.length, 2);
   assert.equal(result[0].action, "LEAD_TRANSFERRED");
   assert.equal(result[1].action, "STATUS_CHANGED");

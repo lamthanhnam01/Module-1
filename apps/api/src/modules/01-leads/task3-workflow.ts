@@ -21,9 +21,9 @@ import {
 import type { Task3Repository } from "./task3-repository.ts";
 
 function createActivity(
-  leadId: string,
+  leadId: number,
   action: Task3ActivityAction,
-  actorId: string,
+  actorId: number,
   now: Date,
   details: Partial<
     Pick<
@@ -53,12 +53,23 @@ function createActivity(
   };
 }
 
+function isStaleVersion(expectedVersion: number | undefined, lead: Task3Lead) {
+  return expectedVersion !== undefined && expectedVersion !== lead.version;
+}
+
+function concurrencyConflict<T>(): Task3Result<T> {
+  return {
+    success: false,
+    error: "Lead đã được cập nhật bởi thao tác khác. Tải lại dữ liệu trước khi thử lại.",
+  };
+}
+
 export async function transitionTask3Lead(
   repository: Task3Repository,
   input: Task3PipelineInput,
   authorize: Task3LeadAuthorizer
 ): Promise<Task3Result<Task3Lead>> {
-  const actorId = input.actorId.trim();
+  const actorId = input.actorId;
   const now = input.now ?? new Date();
   const actorError = validateActorAndTime(actorId, now);
   if (actorError) {
@@ -79,21 +90,22 @@ export async function transitionTask3Lead(
     if (!(await authorize(actorId, lead, "UPDATE_PIPELINE"))) {
       return { success: false, error: "Không có quyền cập nhật Pipeline Lead" };
     }
+    if (isStaleVersion(input.expectedVersion, lead)) {
+      return concurrencyConflict();
+    }
 
     const transition = validateTask3PipelineTransition(
       lead.status,
       input.nextStatus,
-      input.failureReasonId
+      input.lostReason
     );
     if (!transition.success) {
       return transition;
     }
-
-    const failureReasonId = input.failureReasonId?.trim();
+    const lostReason = input.lostReason?.trim();
     if (
       input.nextStatus === "lost" &&
-      (!failureReasonId ||
-        !(await transaction.hasActiveFailureReason(failureReasonId)))
+      (!lostReason || !(await transaction.hasActiveFailureReason(lostReason)))
     ) {
       return {
         success: false,
@@ -103,6 +115,7 @@ export async function transitionTask3Lead(
 
     const changes: Partial<Omit<Task3Lead, "id">> = {
       status: input.nextStatus,
+      statusChangedAt: now,
     };
     if (input.quoteValue !== undefined) {
       changes.quoteValue = input.quoteValue;
@@ -115,20 +128,30 @@ export async function transitionTask3Lead(
     } else {
       changes.closedAt = null;
     }
+    if (input.nextStatus === "lost") {
+      changes.lostReason = lostReason ?? null;
+    }
     if (input.nextStatus === "quote_sent") {
-      changes.quoteSentAt = now;
+      if (!lead.quoteSentAt) {
+        changes.quoteSentAt = now;
+      }
       changes.respondedAt = null;
-    } else if (lead.status === "quote_sent") {
-      changes.quoteSentAt = null;
     }
 
-    const updatedLead = await transaction.updateLead(lead.id, changes);
+    const updatedLead = await transaction.updateLead(
+      lead.id,
+      lead.version,
+      changes
+    );
+    if (!updatedLead) {
+      return concurrencyConflict();
+    }
     await transaction.appendActivity(
       createActivity(lead.id, "STATUS_CHANGED", actorId, now, {
         field: "status",
         oldValue: lead.status,
         newValue: input.nextStatus,
-        reason: input.nextStatus === "lost" ? failureReasonId ?? null : null,
+        reason: input.nextStatus === "lost" ? input.lostReason?.trim() ?? null : null,
       })
     );
 
@@ -166,7 +189,7 @@ export async function reopenTask3Lead(
   input: Task3ReopenInput,
   authorize: Task3LeadAuthorizer
 ): Promise<Task3Result<Task3Lead>> {
-  const actorId = input.actorId.trim();
+  const actorId = input.actorId;
   const reason = input.reason.trim();
   const now = input.now ?? new Date();
   const actorError = validateActorAndTime(actorId, now);
@@ -201,6 +224,9 @@ export async function reopenTask3Lead(
     if (!(await authorize(actorId, lead, "REOPEN"))) {
       return { success: false, error: "Không có quyền mở lại Lead" };
     }
+    if (isStaleVersion(input.expectedVersion, lead)) {
+      return concurrencyConflict();
+    }
     if (lead.status !== "won" && lead.status !== "lost") {
       return { success: false, error: "Chỉ có thể mở lại Lead đã đóng" };
     }
@@ -222,17 +248,26 @@ export async function reopenTask3Lead(
     const changes: Partial<Omit<Task3Lead, "id">> = {
       status: input.nextStatus,
       closedAt: null,
+      statusChangedAt: now,
+      lostReason: null,
+      reopenCount: lead.reopenCount + 1,
     };
     if (input.nextStatus === "quote_sent") {
-      changes.quoteSentAt = now;
-      changes.respondedAt = null;
-    } else {
-      changes.quoteSentAt = null;
+      if (!lead.quoteSentAt) {
+        changes.quoteSentAt = now;
+      }
       changes.respondedAt = null;
     }
-    const updatedLead = await transaction.updateLead(lead.id, changes);
+    const updatedLead = await transaction.updateLead(
+      lead.id,
+      lead.version,
+      changes
+    );
+    if (!updatedLead) {
+      return concurrencyConflict();
+    }
     await transaction.appendActivity(
-      createActivity(lead.id, "STATUS_CHANGED", actorId, now, {
+      createActivity(lead.id, "LEAD_REOPENED", actorId, now, {
         field: "status",
         oldValue: lead.status,
         newValue: input.nextStatus,
@@ -249,15 +284,15 @@ export async function transferTask3Lead(
   authorize: Task3LeadAuthorizer,
   capacityCheck?: CapacityCheck
 ): Promise<Task3Result<Task3Lead>> {
-  const actorId = input.actorId.trim();
-  const receiverId = input.receiverId.trim();
+  const actorId = input.actorId;
+  const receiverId = input.receiverId;
   const note = input.note?.trim() ?? "";
   const now = input.now ?? new Date();
   const actorError = validateActorAndTime(actorId, now);
   if (actorError) {
     return { success: false, error: actorError };
   }
-  if (!receiverId) {
+  if (!Number.isSafeInteger(receiverId) || receiverId <= 0) {
     return { success: false, error: "Thiếu người nhận Lead" };
   }
   if (
@@ -293,6 +328,9 @@ export async function transferTask3Lead(
         success: false,
         error: "Không có quyền chuyển Lead",
       };
+    }
+    if (isStaleVersion(input.expectedVersion, lead)) {
+      return concurrencyConflict();
     }
     if (actorId === receiverId || lead.assignedTo === receiverId) {
       return {
@@ -343,14 +381,19 @@ export async function transferTask3Lead(
       }
     }
 
-    const updatedLead = await transaction.updateLead(lead.id, {
-      assignedTo: receiverId,
-    });
+    const updatedLead = await transaction.updateLead(
+      lead.id,
+      lead.version,
+      { assignedTo: receiverId }
+    );
+    if (!updatedLead) {
+      return concurrencyConflict();
+    }
     await transaction.appendActivity(
       createActivity(lead.id, "LEAD_TRANSFERRED", actorId, now, {
         field: "assignedTo",
-        oldValue: lead.assignedTo,
-        newValue: receiverId,
+        oldValue: String(lead.assignedTo),
+        newValue: String(receiverId),
         reason: input.reason,
         note: note || null,
         fromUserId: lead.assignedTo,
@@ -366,7 +409,7 @@ export async function updateTask3LeadValues(
   input: Task3ValueInput,
   authorize: Task3LeadAuthorizer
 ): Promise<Task3Result<Task3Lead>> {
-  const actorId = input.actorId.trim();
+  const actorId = input.actorId;
   const now = input.now ?? new Date();
   const actorError = validateActorAndTime(actorId, now);
   if (actorError) {
@@ -396,6 +439,9 @@ export async function updateTask3LeadValues(
         error: "Không có quyền cập nhật giá trị Lead",
       };
     }
+    if (isStaleVersion(input.expectedVersion, lead)) {
+      return concurrencyConflict();
+    }
 
     const changes: Partial<Omit<Task3Lead, "id">> = {};
     if (input.quoteValue !== undefined) {
@@ -405,7 +451,14 @@ export async function updateTask3LeadValues(
       changes.closedValue = input.closedValue;
     }
 
-    const updatedLead = await transaction.updateLead(lead.id, changes);
+    const updatedLead = await transaction.updateLead(
+      lead.id,
+      lead.version,
+      changes
+    );
+    if (!updatedLead) {
+      return concurrencyConflict();
+    }
     if (
       updatedLead.quoteValue !== lead.quoteValue &&
       input.quoteValue !== undefined
@@ -440,7 +493,7 @@ export async function confirmTask3Reception(
   input: Task3ReceptionInput,
   authorize: Task3LeadAuthorizer
 ): Promise<Task3Result<Task3Lead>> {
-  const actorId = input.actorId.trim();
+  const actorId = input.actorId;
   const now = input.now ?? new Date();
   const actorError = validateActorAndTime(actorId, now);
   if (actorError) {
@@ -458,6 +511,9 @@ export async function confirmTask3Reception(
         error: "Không có quyền xác nhận tiếp nhận Lead",
       };
     }
+    if (isStaleVersion(input.expectedVersion, lead)) {
+      return concurrencyConflict();
+    }
     if (lead.assignedTo !== actorId) {
       return {
         success: false,
@@ -471,10 +527,14 @@ export async function confirmTask3Reception(
       };
     }
 
-    const updatedLead = await transaction.updateLead(lead.id, {
-      receivedBy: actorId,
-      receivedAt: now,
-    });
+    const updatedLead = await transaction.updateLead(
+      lead.id,
+      lead.version,
+      { receivedBy: actorId, receivedAt: now }
+    );
+    if (!updatedLead) {
+      return concurrencyConflict();
+    }
     await transaction.appendActivity(
       createActivity(lead.id, "LEAD_RECEIVED", actorId, now, {
         field: "receivedAt",
@@ -500,13 +560,13 @@ export function getTask3PendingQuoteFollowups<T extends Task3QuoteFollowupLead>(
       const leftSentAt = left.quoteSentAt?.getTime() ?? 0;
       const rightSentAt = right.quoteSentAt?.getTime() ?? 0;
       const timeDifference = leftSentAt - rightSentAt;
-      return timeDifference || left.id.localeCompare(right.id);
+      return timeDifference || left.id - right.id;
     });
 }
 
 export function getTask3LeadHistory(
   activities: readonly Task3Activity[],
-  leadId: string
+  leadId: number
 ): Task3Activity[] {
   return activities
     .filter((activity) => activity.leadId === leadId)
@@ -516,7 +576,7 @@ export function getTask3LeadHistory(
       return (
         timeDifference ||
         left.action.localeCompare(right.action) ||
-        left.actorId.localeCompare(right.actorId)
+        left.actorId - right.actorId
       );
     });
 }

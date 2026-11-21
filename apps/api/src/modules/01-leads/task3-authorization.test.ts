@@ -43,9 +43,10 @@ const hasPermission = (role: RoleCode, permission: BaPermissionKey) =>
   rolePermissions[role].includes(permission);
 
 const lead: Task3Lead = {
-  id: "lead-01",
+  id: 1,
+  version: 1,
   status: "quoting",
-  assignedTo: "sales-01",
+  assignedTo: 101,
   receivedBy: null,
   receivedAt: null,
   quoteSentAt: null,
@@ -53,60 +54,63 @@ const lead: Task3Lead = {
   quoteValue: null,
   closedValue: null,
   closedAt: null,
+  statusChangedAt: new Date("2026-11-07T10:00:00.000Z"),
+  lostReason: null,
+  reopenCount: 0,
 };
 
 test("Task 3 authorization maps BA permissions and restricts Sales to owned Leads", async () => {
   const salesAuthorizer = createTask3LeadAuthorizer({
-    id: "sales-01",
+    id: 101,
     roleCode: "SALES",
   }, hasPermission);
 
-  assert.equal(await salesAuthorizer("sales-01", lead, "UPDATE_PIPELINE"), true);
-  assert.equal(await salesAuthorizer("sales-01", lead, "TRANSFER"), true);
+  assert.equal(await salesAuthorizer(101, lead, "UPDATE_PIPELINE"), true);
+  assert.equal(await salesAuthorizer(101, lead, "TRANSFER"), true);
   assert.equal(
     await salesAuthorizer(
-      "sales-01",
-      { ...lead, assignedTo: "sales-02" },
+      101,
+      { ...lead, assignedTo: 102 },
       "UPDATE_PIPELINE",
     ),
     false,
   );
-  assert.equal(await salesAuthorizer("sales-01", lead, "RECEIVE"), true);
+  assert.equal(await salesAuthorizer(101, lead, "RECEIVE"), true);
 });
 
 test("Task 3 authorization honors manager permissions without granting bypass", async () => {
   const salesLeadAuthorizer = createTask3LeadAuthorizer({
-    id: "manager-01",
+    id: 201,
     roleCode: "SALES_LEAD",
   }, hasPermission);
   const marketingLeadAuthorizer = createTask3LeadAuthorizer({
-    id: "marketing-01",
+    id: 301,
     roleCode: "MKT_LEAD",
   }, hasPermission);
 
   assert.equal(
-    await salesLeadAuthorizer("manager-01", lead, "UPDATE_PIPELINE"),
+    await salesLeadAuthorizer(201, lead, "UPDATE_PIPELINE"),
     true,
   );
   assert.equal(
-    await salesLeadAuthorizer("manager-01", lead, "TRANSFER"),
+    await salesLeadAuthorizer(201, lead, "TRANSFER"),
     true,
   );
   assert.equal(
-    await marketingLeadAuthorizer("marketing-01", lead, "UPDATE_PIPELINE"),
+    await marketingLeadAuthorizer(301, lead, "UPDATE_PIPELINE"),
     false,
   );
   assert.equal(
-    await marketingLeadAuthorizer("marketing-01", lead, "TRANSFER"),
+    await marketingLeadAuthorizer(301, lead, "TRANSFER"),
     false,
   );
 });
 
 test("Task 3 authorization rejects an actor different from the session identity", async () => {
   const authorizer = createTask3LeadAuthorizer({
-    id: "sales-01",
+    id: 101,
     roleCode: "SALES",
   }, hasPermission);
 
-  assert.equal(await authorizer("sales-02", lead, "UPDATE_PIPELINE"), false);
+  assert.equal(await authorizer(102, lead, "UPDATE_PIPELINE"), false);
 });

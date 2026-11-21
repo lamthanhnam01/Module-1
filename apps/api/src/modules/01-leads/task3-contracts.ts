@@ -16,6 +16,7 @@ export type Task3TransferReason =
 
 export type Task3ActivityAction =
   | "STATUS_CHANGED"
+  | "LEAD_REOPENED"
   | "LEAD_RECEIVED"
   | "LEAD_TRANSFERRED"
   | "LEAD_UPDATED";
@@ -28,34 +29,38 @@ export type Task3LeadAction =
   | "TRANSFER";
 
 export interface Task3Lead {
-  id: string;
+  id: number;
+  version: number;
   status: Task3PipelineStatus;
-  assignedTo: string | null;
-  receivedBy: string | null;
+  assignedTo: number | null;
+  receivedBy: number | null;
   receivedAt: Date | null;
   quoteSentAt: Date | null;
   respondedAt: Date | null;
   quoteValue: number | null;
   closedValue: number | null;
   closedAt: Date | null;
+  statusChangedAt: Date;
+  lostReason: string | null;
+  reopenCount: number;
 }
 
 export interface Task3Activity {
-  leadId: string;
+  leadId: number;
   action: Task3ActivityAction;
-  actorId: string;
+  actorId: number;
   createdAt: Date;
   field: string | null;
   oldValue: string | null;
   newValue: string | null;
   reason: string | null;
   note: string | null;
-  fromUserId: string | null;
-  toUserId: string | null;
+  fromUserId: number | null;
+  toUserId: number | null;
 }
 
 export interface Task3TransferCandidate {
-  id: string;
+  id: number;
   isActive: boolean;
   isOnline: boolean;
   canReceiveLead: boolean;
@@ -67,18 +72,20 @@ export type Task3Result<T> =
   | { success: false; error: string };
 
 export interface Task3PipelineInput {
-  leadId: string;
-  actorId: string;
+  leadId: number;
+  actorId: number;
+  expectedVersion?: number;
   nextStatus: Task3PipelineStatus;
-  failureReasonId?: string;
+  lostReason?: string;
   quoteValue?: number | null;
   closedValue?: number | null;
   now?: Date;
 }
 
 export interface Task3ReopenInput {
-  leadId: string;
-  actorId: string;
+  leadId: number;
+  actorId: number;
+  expectedVersion?: number;
   nextStatus: Task3PipelineStatus;
   reason: string;
   reopenWindowMs: number;
@@ -86,30 +93,33 @@ export interface Task3ReopenInput {
 }
 
 export interface Task3TransferInput {
-  leadId: string;
-  actorId: string;
-  receiverId: string;
+  leadId: number;
+  actorId: number;
+  expectedVersion?: number;
+  receiverId: number;
   reason: Task3TransferReason;
   note?: string;
   now?: Date;
 }
 
 export interface Task3ReceptionInput {
-  leadId: string;
-  actorId: string;
+  leadId: number;
+  actorId: number;
+  expectedVersion?: number;
   now?: Date;
 }
 
 export interface Task3ValueInput {
-  leadId: string;
-  actorId: string;
+  leadId: number;
+  actorId: number;
+  expectedVersion?: number;
   quoteValue?: number | null;
   closedValue?: number | null;
   now?: Date;
 }
 
 export interface Task3QuoteFollowupLead {
-  id: string;
+  id: number;
   status: Task3PipelineStatus;
   quoteSentAt: Date | null;
   respondedAt: Date | null;

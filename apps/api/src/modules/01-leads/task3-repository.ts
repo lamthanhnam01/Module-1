@@ -5,15 +5,16 @@ import type {
 } from "./task3-contracts.ts";
 
 export interface Task3Transaction {
-  getLeadForUpdate(leadId: string): Promise<Task3Lead | null>;
+  getLeadForUpdate(leadId: number): Promise<Task3Lead | null>;
   getTransferCandidateForUpdate(
-    userId: string
+    userId: number
   ): Promise<Task3TransferCandidate | null>;
-  hasActiveFailureReason(reasonId: string): Promise<boolean>;
+  hasActiveFailureReason(lostReason: string): Promise<boolean>;
   updateLead(
-    leadId: string,
-    changes: Partial<Omit<Task3Lead, "id">>
-  ): Promise<Task3Lead>;
+    leadId: number,
+    expectedVersion: number,
+    changes: Partial<Omit<Task3Lead, "id" | "version">>
+  ): Promise<Task3Lead | null>;
   appendActivity(activity: Task3Activity): Promise<void>;
 }
 

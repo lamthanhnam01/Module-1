@@ -20,27 +20,42 @@ export const TASK3_TRANSFER_REASONS = [
   'OTHER',
 ] as const;
 
-const nonNegativeValueSchema = z.number().finite().min(0);
+export const TASK3_ACTIVITY_ACTION_TYPES = [
+  'status_change',
+  'reopen_lead',
+  'confirm_receive',
+  'reassign_sales',
+  'update_info',
+] as const;
+
+const positiveIdSchema = z.number().int().safe().positive();
+const expectedVersionSchema = z.number().int().safe().positive();
+const nonNegativeValueSchema = z.number().int().safe().nonnegative();
 
 export const Task3LeadIdParamsSchema = z
   .object({
-    leadId: z.string().trim().min(1),
+    id: z
+      .string()
+      .regex(/^[1-9]\d*$/)
+      .transform(Number)
+      .pipe(positiveIdSchema),
   })
   .strict();
 
 export const Task3PipelineRequestSchema = z
   .object({
+    expectedVersion: expectedVersionSchema,
     nextStatus: z.enum(TASK3_PIPELINE_STATUSES),
-    failureReasonId: z.string().trim().min(1).optional(),
-    quoteValue: nonNegativeValueSchema.nullable().optional(),
-    closedValue: nonNegativeValueSchema.nullable().optional(),
+    lostReason: z.string().trim().min(1).optional(),
+    quoteValueVnd: nonNegativeValueSchema.nullable().optional(),
+    dealValueVnd: nonNegativeValueSchema.nullable().optional(),
   })
   .strict()
   .superRefine((request, context) => {
-    if (request.nextStatus === 'lost' && !request.failureReasonId) {
+    if (request.nextStatus === 'lost' && !request.lostReason) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['failureReasonId'],
+        path: ['lostReason'],
         message: 'Bắt buộc chọn lý do thất bại.',
       });
     }
@@ -48,6 +63,7 @@ export const Task3PipelineRequestSchema = z
 
 export const Task3ReopenRequestSchema = z
   .object({
+    expectedVersion: expectedVersionSchema,
     nextStatus: z.enum(TASK3_OPEN_PIPELINE_STATUSES),
     reason: z.string().trim().min(1),
   })
@@ -55,7 +71,8 @@ export const Task3ReopenRequestSchema = z
 
 export const Task3TransferRequestSchema = z
   .object({
-    receiverId: z.string().trim().min(1),
+    expectedVersion: expectedVersionSchema,
+    receiverId: positiveIdSchema,
     reason: z.enum(TASK3_TRANSFER_REASONS),
     note: z.string().trim().optional(),
   })
@@ -72,49 +89,59 @@ export const Task3TransferRequestSchema = z
 
 export const Task3LeadValuesRequestSchema = z
   .object({
-    quoteValue: nonNegativeValueSchema.nullable().optional(),
-    closedValue: nonNegativeValueSchema.nullable().optional(),
+    expectedVersion: expectedVersionSchema,
+    quoteValueVnd: nonNegativeValueSchema.nullable().optional(),
+    dealValueVnd: nonNegativeValueSchema.nullable().optional(),
   })
   .strict()
   .refine(
     (request) =>
-      request.quoteValue !== undefined || request.closedValue !== undefined,
+      request.quoteValueVnd !== undefined || request.dealValueVnd !== undefined,
     'Cần nhập giá trị báo giá hoặc giá trị chốt.',
   );
 
+export const Task3ReceptionRequestSchema = z
+  .object({
+    expectedVersion: expectedVersionSchema,
+  })
+  .strict();
+
 export const Task3LeadResponseSchema = z
   .object({
-    id: z.string().min(1),
-    status: z.enum(TASK3_PIPELINE_STATUSES),
-    assignedTo: z.string().nullable(),
-    receivedBy: z.string().nullable(),
+    id: positiveIdSchema,
+    version: expectedVersionSchema,
+    pipelineStatus: z.enum(TASK3_PIPELINE_STATUSES),
+    assignedSalesId: positiveIdSchema.nullable(),
+    receivedByUserId: positiveIdSchema.nullable(),
     receivedAt: z.string().datetime().nullable(),
-    quoteSentAt: z.string().datetime().nullable(),
-    respondedAt: z.string().datetime().nullable(),
-    quoteValue: nonNegativeValueSchema.nullable(),
-    closedValue: nonNegativeValueSchema.nullable(),
+    firstQuoteSentAt: z.string().datetime().nullable(),
+    quoteRespondedAt: z.string().datetime().nullable(),
+    quoteValueVnd: nonNegativeValueSchema.nullable(),
+    dealValueVnd: nonNegativeValueSchema.nullable(),
     closedAt: z.string().datetime().nullable(),
+    statusChangedAt: z.string().datetime(),
+    lostReason: z.string().nullable(),
+    reopenCount: z.number().int().nonnegative(),
   })
   .strict();
 
 export const Task3ActivityResponseSchema = z
   .object({
-    leadId: z.string().min(1),
-    action: z.enum([
-      'STATUS_CHANGED',
-      'LEAD_RECEIVED',
-      'LEAD_TRANSFERRED',
-      'LEAD_UPDATED',
-    ]),
-    actorId: z.string().min(1),
+    id: positiveIdSchema,
+    leadId: positiveIdSchema,
+    actionType: z.enum(TASK3_ACTIVITY_ACTION_TYPES),
     createdAt: z.string().datetime(),
-    field: z.string().nullable(),
-    oldValue: z.string().nullable(),
-    newValue: z.string().nullable(),
-    reason: z.string().nullable(),
+    fromSalesId: positiveIdSchema.nullable(),
+    toSalesId: positiveIdSchema.nullable(),
+    transferReason: z.string().nullable(),
+    oldStatus: z.string().nullable(),
+    newStatus: z.string().nullable(),
+    oldValueJson: z.string().nullable(),
+    newValueJson: z.string().nullable(),
     note: z.string().nullable(),
-    fromUserId: z.string().nullable(),
-    toUserId: z.string().nullable(),
+    actionById: positiveIdSchema.nullable(),
+    actorType: z.enum(['user', 'webhook', 'system']),
+    actorRef: z.string().nullable(),
   })
   .strict();
 
@@ -127,6 +154,9 @@ export type Task3TransferRequestDto = z.infer<
 >;
 export type Task3LeadValuesRequestDto = z.infer<
   typeof Task3LeadValuesRequestSchema
+>;
+export type Task3ReceptionRequestDto = z.infer<
+  typeof Task3ReceptionRequestSchema
 >;
 export type Task3LeadResponseDto = z.infer<typeof Task3LeadResponseSchema>;
 export type Task3ActivityResponseDto = z.infer<

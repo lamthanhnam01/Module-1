@@ -11,11 +11,11 @@ const requiredPermission: Record<Task3LeadAction, BaPermissionKey> = {
 }
 
 export function createTask3LeadAuthorizer(actor: {
-  id: string;
+  id: number;
   roleCode: RoleCode;
 }, hasPermission: (role: RoleCode, permission: BaPermissionKey) => boolean): Task3LeadAuthorizer {
   return async (actorId, lead, action) => {
-    if (!actor.id.trim() || actor.id !== actorId) {
+    if (!Number.isSafeInteger(actor.id) || actor.id <= 0 || actor.id !== actorId) {
       return false;
     }
 

@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "id": "M01-T03-pipeline",
+  "status": "ready",
+  "modules": [
+    "01-leads"
+  ],
+  "title": "Triển khai logic Pipeline và chuyển giao Lead",
+  "goal": "Hoàn thiện workflow, contracts, Prisma adapter và API routes cho Pipeline, mở lại, chuyển giao, xác nhận tiếp nhận theo schema M01 và version chống ghi đè.",
+  "acceptanceCriteria": [
+    "Cho phép chuyển Pipeline đúng thứ tự, lùi quote_sent về quoting và thất bại từ các trạng thái còn lại; Chốt sang Thất bại và chuyển sai bị từ chối bằng E7.",
+    "Chuyển thất bại yêu cầu lostReason nằm trong danh mục đang hoạt động; giá trị báo giá/chốt là số nguyên VND không âm an toàn và thay đổi được ghi lịch sử.",
+    "Mở lại Lead đã đóng chỉ trong thời hạn cấu hình server, có lý do, tăng reopenCount và ghi lịch sử trạng thái.",
+    "Lead chuyển giao giữ nguyên trạng thái, kiểm tra điều kiện người nhận tại lần xác nhận và áp dụng kiểm tra tải việc theo chính sách được cung cấp.",
+    "Danh sách báo giá chờ phản hồi và lịch sử Lead có test logic; ghi trạng thái và lịch sử bằng repository transaction, đồng thời lỗi ghi history phải làm rollback.",
+    "Mutations nhận authorizer máy chủ theo ma trận quyền; actor/time xác nhận tiếp nhận lấy từ session/server clock, không nhận từ client.",
+    "Giữ nguyên năm trạng thái Pipeline; tiếp nhận, trùng và Spam không trở thành trạng thái Pipeline mới.",
+    "Giữ mốc firstQuoteSentAt ban đầu khi lùi trạng thái hoặc mở lại; đặt lại quoteRespondedAt khi gửi/mở lại trạng thái quote_sent.",
+    "Mọi mutation dùng ID số và expectedVersion theo schema chung; CAS tăng version, version cũ trả conflict và không ghi activity.",
+    "Prisma adapter ánh xạ pipeline_status, assigned_sales_id, received_by_user_id, first_quote_sent_at, quote_value/deal_value, reopen_count và lead_activities.",
+    "Có API routes cho pipeline, reopen, transfer và receive; public contracts strict, dùng tên ID/trường chung và không nhận thời hạn mở lại từ client."
+  ],
+  "allowedSharedPaths": [
+    "apps/api/tsconfig.json",
+    "packages/contracts/src/common/index.ts"
+  ],
+  "readWhenNeeded": [
+    "docs/modules/01-leads.md",
+    "docs/decisions/OPEN_QUESTIONS.md",
+    "docs/PERMISSIONS.md",
+    "docs/database/TABLE_OWNERSHIP.md"
+  ],
+  "notes": "Nguồn: yêu cầu Task 3 và Bao_cao_Module_1_Quan_ly_Lead (1).docx, mục 2.4-2.5, 3, 7.2, 9 (TC05-TC07, TC11-TC12). Schema field/id tham khảo Task 1 branch https://github.com/lamthanhnam01/Module-1/tree/feature/task1-lead-profile; Task 2 branch chỉ có draft attachment, không phải nguồn Lead/Pipeline. Schema đó chưa có trong checkout hiện tại; Task 3 dùng Prisma parameterized SQL theo field names/id đã đối chiếu, không tự thêm model hoặc sửa bảng Core. Khi ghép cần đảm bảo Task 1 đã tích hợp các cột version, reopen_count, received_by_user_id, first_quote_sent_at, quote_responded_at, quote_value/deal_value và bảng lead_activities. Public contract chung cần reviewer Nhóm 1 và consumer FE/API. Chỉ chạy db:generate nếu schema đã được ghép; không chạy db:push/migration. SQLite là local provider hiện có; production provider vẫn chưa chốt. Reopen yêu cầu TASK3_REOPEN_WINDOW_MS server config. Chuyển giao fail-closed cho tới khi có presence/online và capacity policy đã được duyệt. Lý do thất bại cần provider danh mục đang hoạt động; do schema Task 1 chỉ lưu lostReason dạng text, route trả 503 khi chưa cấu hình provider thay vì bỏ kiểm tra. Yêu cầu website intake, duplicate disposition, reminders và ảnh status được ghi tại docs/modules/01-leads.md; phần thiếu chưa tự đặt rule. apps/api/tsconfig.json bật allowImportingTsExtensions cho Node native type-stripping tests; cần reviewer Nhóm 1. Chỉ sửa cục bộ; không migrate, db push, commit hay push."
+}

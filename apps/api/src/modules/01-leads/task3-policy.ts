@@ -14,7 +14,7 @@ const allowedTransitions: Record<
   new_lead: ["quoting", "lost"],
   quoting: ["quote_sent", "lost"],
   quote_sent: ["quoting", "won", "lost"],
-  won: ["lost"],
+  won: [],
   lost: [],
 };
 
@@ -24,7 +24,7 @@ export type CapacityCheck = (
 ) => boolean;
 
 export type Task3LeadAuthorizer = (
-  actorId: string,
+  actorId: number,
   lead: Task3Lead,
   action: Task3LeadAction
 ) => Promise<boolean>;
@@ -37,15 +37,15 @@ export function isValidValue(value: number | null | undefined): boolean {
   return (
     value === undefined ||
     value === null ||
-    (Number.isFinite(value) && value >= 0)
+    (Number.isSafeInteger(value) && value >= 0)
   );
 }
 
 export function validateActorAndTime(
-  actorId: string,
+  actorId: number,
   now: Date
 ): string | null {
-  if (!actorId.trim()) {
+  if (!Number.isSafeInteger(actorId) || actorId <= 0) {
     return "Thiếu người thực hiện";
   }
   if (!isValidDate(now)) {
@@ -63,7 +63,7 @@ export function isTask3PipelineStatus(
 export function validateTask3PipelineTransition(
   currentStatus: Task3PipelineStatus,
   nextStatus: Task3PipelineStatus,
-  failureReasonId?: string
+  lostReason?: string
 ): Task3Result<null> {
   if (!isTask3PipelineStatus(currentStatus)) {
     return {
@@ -83,7 +83,7 @@ export function validateTask3PipelineTransition(
       error: "Chuyển trạng thái không hợp lệ (E7)",
     };
   }
-  if (nextStatus === "lost" && !failureReasonId?.trim()) {
+  if (nextStatus === "lost" && !lostReason?.trim()) {
     return {
       success: false,
       error: "Bắt buộc chọn lý do thất bại",
